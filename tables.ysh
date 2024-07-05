@@ -1,0 +1,80 @@
+#!/usr/bin/env ysh
+
+proc Table (; place; ; block_def) {
+    var p = { rows: [], types: [], cols: [] }
+    ctx push (p;; block_def)
+
+    var col_length = len(p.cols)
+
+    var out = {}
+    setvar out._cols = p.cols
+    setvar out._rows = p.rows
+    for col in (p.cols) {
+        setvar out[col] = []
+    }
+    for i, row in (p.rows) {
+        if (len(row) !== col_length) {
+            error "wrong amount of columns: $[len(row)] but should be $col_length in row $[i+1] ($[row=>join(" ")])" (code=3)
+        }
+        for i, col in (p.cols) {
+            call out[col]->append(row[i])
+        }
+    }
+
+    call place->setValue(out)
+}
+
+proc each-row (;table;;block) {
+    var cols = {}
+    for row in (table._rows) {
+        for i, col in (table._cols) {
+            setvar cols[col] = row[i]
+        }
+        #eval (cols;;block)
+        = cols
+    }
+}
+#proc each-column (table;;;block) {
+#
+#}
+
+proc cols {
+    for column in (ARGV) {
+        ctx emit cols (column)
+    }
+}
+
+proc type {
+    for type in (ARGV) {
+        ctx emit types (type)
+    }
+}
+
+proc row {
+    ctx emit rows (ARGV)
+}
+
+proc rows (string) {
+    # TODO: use =>splitlines()
+    for line in (string=>split(u'\n')) {
+        row @[line=>split(' ')]
+    }
+}
+
+## test
+
+if is-main {
+    Table (&mytable) {
+        cols a b c
+        type Int Str Int
+        row Hello World do
+        rows """
+        Hello second row
+        hello third row
+        """
+    }
+    
+    = mytable
+    = mytable.a[0]
+    each-row (mytable) { echo $a }
+}
