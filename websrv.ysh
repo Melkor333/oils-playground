@@ -1,0 +1,55 @@
+#!/usr/bin/env ysh
+
+var port = 8080
+
+rm -f http
+mkfifo http
+
+proc hwrite {
+  write --end $'\n' @ARGV
+}
+
+source --builtin ysh/args.ysh
+
+parser (&spec) {
+  flag -v --verbose
+}
+
+var arg = parseArgs(spec, ARGV)
+setglobal VERBOSE = arg.verbose
+
+proc tee {
+  if (VERBOSE) {
+    command tee < /dev/stdin @ARGV
+  } else {
+    cat /dev/stdin > $[ARGV[0]]
+  }
+}
+
+proc parse_header {
+  while read {
+    if (len(_reply) < 2) {
+      echo " $[len(_reply)]: $_reply" >&2
+      break
+    }
+    echo $_reply >&2
+    echo $_reply
+  }
+}
+
+proc handle_request () {
+  var header = $(parse_header)
+  write $header >&2
+  hwrite 'HTTP/1.0 200 OK'
+  hwrite "Content-Length: $[len(header)]"
+  hwrite ''
+  hwrite $header
+  hwrite ''
+}
+
+cat http | nc -l -k -p $port | \
+   { while (true) { handle_request } | tee http }
+
+
+# TODO: needs a trap
+rm http
