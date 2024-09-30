@@ -6,11 +6,7 @@
 # -v to show output
 # -r to just return the sent request
 
-var fifo = $(mktemp -u)
-mkfifo $fifo
-
 source --builtin ysh/args.ysh
-
 parser (&spec) {
   arg port (help="the port being used", default=8080)
   arg directory (help='Directory to serve files in', default="./")
@@ -18,7 +14,6 @@ parser (&spec) {
   flag -i --index (help="show a file index instead od searching for a index.html file")
   flag -v --verbose
 }
-
 setglobal arg = parseArgs(spec, ARGV)
 
 proc log {
@@ -30,7 +25,7 @@ proc log {
 # http uses \r\n
 proc hwrite {
   log @ARGV
-  write "$[ARGV=>join()]"
+  write --end $'\r\n' "$[ARGV=>join()]"
 }
 
 var first_reg = / <capture ![ space ]+ as type> space <capture ![ space ]+ as slug> space 'HTTP/1.1' .*/
@@ -88,12 +83,13 @@ proc return-request () {
 }
 
 proc write-404 (file) {
-  var msg = "<head></head><body><h1>File not found $[file[1:]]</h1></body>"
+  var msg = "<head></head><body><h1>File not found $[file[1:]]</h1></body>" ++ $'\n'
   hwrite 'HTTP/1.1 404 File not found'
   hwrite "Content-Type: text/html"
   hwrite "Content-Length: $[len(msg)+1]"
   hwrite ''
-  hwrite $msg
+  log $msg
+  write $msg
 }
 
 proc write-file (file) {
@@ -132,19 +128,19 @@ proc return-file () {
   var header = header[1]
   assert [(header.slug ~ / %start '/' [ w '/' ]* / )]
   var p = '.' ++ header.slug
-  if (p ~ / '/' %end /) {
+  assert [p !~ / '..' /]
+  if (p !~~ '*/') {
+    write-file $p
+  } else {
     if test -d $p {
       if (arg.index) {
         list-dir $p $[header.slug]
       } elif test -f $[p ++ "index.html"] {
         write-file $[p ++ "index.html"]
       }
-    #TODO: index or 404
     } else {
       write-404 $file
     }
-  } else {
-    write-file $p
   }
 }
 
@@ -159,7 +155,7 @@ proc handle-req {
   }
 }
 
-
+var fifo = $(mktemp -u)
+mkfifo $fifo
 trap " rm $fifo" EXIT SIGINT
 handle-req
-
