@@ -1,6 +1,10 @@
 #!/usr/bin/env ysh
-
-var port = 8080
+# minimal static file webserver
+# requires netcat, gnu tree and stat
+# Usage: websrv.ysh PORT DIRECTORY [-ivr]
+# -i to show a tree on a directory
+# -v to show output
+# -r to just return the sent request
 
 var fifo = $(mktemp -u)
 mkfifo $fifo
@@ -8,10 +12,11 @@ mkfifo $fifo
 source --builtin ysh/args.ysh
 
 parser (&spec) {
-  flag -v --verbose
+  arg port (help="the port being used", default=8080)
   arg directory (help='Directory to serve files in', default="./")
   flag -r --return (help="return the request")
   flag -i --index (help="show a file index instead od searching for a index.html file")
+  flag -v --verbose
 }
 
 setglobal arg = parseArgs(spec, ARGV)
@@ -31,7 +36,7 @@ proc hwrite {
 var first_reg = / <capture ![ space ]+ as type> space <capture ![ space ]+ as slug> space 'HTTP/1.1' .*/
 var header_reg = / <capture ![ ':' ]+ as key> ': ' <capture .+ as value> /
 
-typed proc parse_header (;out) {
+typed proc parse-header (;out) {
   var h = {}
   read first
   var raw = first ++ $'\r\n'
@@ -60,7 +65,7 @@ typed proc parse_header (;out) {
   call out->setValue([raw, h])
 }
 
-typed proc parse_body (;header, out) {
+typed proc parse-body (;header, out) {
   if (header=>get('Content-Length', 0) === 0) {
     call out->setValue('')
     return 0
@@ -69,10 +74,10 @@ typed proc parse_body (;header, out) {
   call out->setValue(_reply)
 }
 
-proc return_request () {
+proc return-request () {
   # TODO: make a function which takes io
-  parse_header (&header)
-  parse_body (header[1], &body)
+  parse-header (&header)
+  parse-body (header[1], &body)
   var message = header[0] ++ body
 
   hwrite 'HTTP/1.1 200 OK'
@@ -122,8 +127,8 @@ proc list-dir (dir, slug) {
 
 proc return-file () {
   # TODO: make a function which takes io
-  parse_header (&header)
-  parse_body (header[1], &body)
+  parse-header (&header)
+  parse-body (header[1], &body)
   var header = header[1]
   assert [(header.slug ~ / %start '/' [ w '/' ]* / )]
   var p = '.' ++ header.slug
@@ -146,10 +151,10 @@ proc return-file () {
 proc handle-req {
   cd $[arg.directory]
   if (arg.return) {
-    nc -l -k -p $port < $fifo | \
-      { while (true) { return_request } > $fifo }
+    nc -l -k -p $[arg.port] < $fifo | \
+      { while (true) { return-request } > $fifo }
   } else {
-    nc -l -k -p $port < $fifo | \
+    nc -l -k -p $[arg.port] < $fifo | \
       { while (true) { return-file } > $fifo }
   }
 }
