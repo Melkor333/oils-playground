@@ -2,8 +2,8 @@
 
 var port = 8080
 
-rm -f http
-mkfifo http
+var fifo = $(mktemp -u)
+mkfifo $fifo
 
 source --builtin ysh/args.ysh
 
@@ -11,6 +11,7 @@ parser (&spec) {
   flag -v --verbose
   arg directory (help='Directory to serve files in', default="./")
   flag -r --return (help="return the request")
+  flag -i --index (help="show a file index instead od searching for a index.html file")
 }
 
 setglobal arg = parseArgs(spec, ARGV)
@@ -81,17 +82,19 @@ proc return_request () {
   write $message
 }
 
-proc write-404 () {
+proc write-404 (file) {
+  var msg = "<head></head><body><h1>File not found $[file[1:]]</h1></body>"
   hwrite 'HTTP/1.1 404 File not found'
-  hwrite "Content-Length: 0"
+  hwrite "Content-Type: text/html"
+  hwrite "Content-Length: $[len(msg)+1]"
   hwrite ''
-
+  hwrite $msg
 }
 
 proc write-file (file) {
   if ! test -f $file {
     log "$file not found"
-    write-404
+    write-404 $file
     return
   }
   var size = $(stat --printf="%s" $file)
@@ -103,19 +106,37 @@ proc write-file (file) {
   cat $file
 }
 
+proc write-html (html) {
+  hwrite 'HTTP/1.1 200 OK'
+  hwrite "Content-Type: text/html"
+  hwrite "Content-Length: $[len(html)+1]"
+  hwrite ''
+  log "*print $html*"
+  write $html
+
+}
+
+proc list-dir (dir, slug) {
+  write-html $(cd $dir; tree -H $slug)
+}
+
 proc return-file () {
   # TODO: make a function which takes io
   parse_header (&header)
   parse_body (header[1], &body)
   var header = header[1]
   assert [(header.slug ~ / %start '/' [ w '/' ]* / )]
-  var p = arg.directory ++ header.slug
+  var p = '.' ++ header.slug
   if (p ~ / '/' %end /) {
     if test -d $p {
-      if test -f $[p ++ "index.html"] {
+      if (arg.index) {
+        list-dir $p $[header.slug]
+      } elif test -f $[p ++ "index.html"] {
         write-file $[p ++ "index.html"]
       }
     #TODO: index or 404
+    } else {
+      write-404 $file
     }
   } else {
     write-file $p
@@ -123,16 +144,17 @@ proc return-file () {
 }
 
 proc handle-req {
+  cd $[arg.directory]
   if (arg.return) {
-    nc -l -k -p $port < http | \
-      { while (true) { return_request } > http; read < http }
+    nc -l -k -p $port < $fifo | \
+      { while (true) { return_request } > $fifo }
   } else {
-    nc -l -k -p $port < http | \
-      { while (true) { return-file } > http; read < http }
+    nc -l -k -p $port < $fifo | \
+      { while (true) { return-file } > $fifo }
   }
 }
 
 
-trap ' rm http' EXIT SIGINT
+trap " rm $fifo" EXIT SIGINT
 handle-req
 
