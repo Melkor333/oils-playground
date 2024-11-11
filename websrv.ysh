@@ -6,7 +6,7 @@
 # -v to show output
 # -r to just return the sent request
 
-source --builtin ysh/args.ysh
+use  $LIB_YSH/args.ysh --pick parser parseArgs
 parser (&spec) {
   arg port (help="the port being used", default=8080)
   arg directory (help='Directory to serve files in', default="./")
@@ -18,7 +18,7 @@ setglobal arg = parseArgs(spec, ARGV)
 
 proc log {
   if (arg.verbose) {
-    write --end '' u'\u{1B}[31m' "$[ARGV =>join()=>trimEnd($'\n')]" u'\u{1B}[0m' >&2
+    write --end '' u'\u{1B}[31m' "$[ARGV =>join(' ')=>trimEnd($'\n')]" u'\u{1B}[0m' >&2
   }
 }
 
@@ -83,7 +83,7 @@ proc return-request () {
 }
 
 proc write-404 (file) {
-  var msg = "<head></head><body><h1>File not found $[file[1:]]</h1></body>" ++ $'\n'
+  var msg = "<head></head><body><h1>File not found $file</h1></body>" ++ $'\n'
   hwrite 'HTTP/1.1 404 File not found'
   hwrite "Content-Type: text/html"
   hwrite "Content-Length: $[len(msg)+1]"
@@ -118,39 +118,47 @@ proc write-html (html) {
 }
 
 proc list-dir (dir, slug) {
-  write-html $(cd $dir; tree -H $slug)
+  write-html $(cd $dir; tree -H ./$slug)
 }
 
 proc return-file () {
   # TODO: make a function which takes io
+  var file
   parse-header (&header)
   parse-body (header[1], &body)
   var header = header[1]
   assert [(header.slug ~ / %start '/' [ w '/' ]* / )]
+  log slug: $(json write (header))
   var p = '.' ++ header.slug
   assert [p !~ / '..' /]
   if (p !~~ '*/') {
+    log sending file $p
     write-file $p
-  } else {
-    if test -d $p {
-      if (arg.index) {
-        list-dir $p $[header.slug]
-      } elif test -f $[p ++ "index.html"] {
-        write-file $[p ++ "index.html"]
-      }
-    } else {
-      write-404 $file
+    return
+  }
+  if test -d $p {
+    if (arg.index) {
+      log Sending tree
+      list-dir $p $[header.slug]
+      return
+    } elif test -f $[p ++ "index.html"] {
+      log Sending index.html
+      write-file $[p ++ "index.html"]
+      return
     }
   }
+  log Sending 404
+  # TODO: check if file is Null
+  write-404 $file
 }
 
 proc handle-req {
   cd $[arg.directory]
   if (arg.return) {
-    nc -l -k -p $[arg.port] < $fifo | \
+    ncat -l -k -p $[arg.port] < $fifo | \
       { while (true) { return-request } > $fifo }
   } else {
-    nc -l -k -p $[arg.port] < $fifo | \
+    ncat -l -k -p $[arg.port] < $fifo | \
       { while (true) { return-file } > $fifo }
   }
 }
