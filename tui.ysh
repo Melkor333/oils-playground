@@ -1,0 +1,155 @@
+var TERM_CR  = u'\u{0D}'
+var TERM_ESC = u'\u{1B}'
+var TERM_CSI = "$TERM_ESC["
+var COL = {
+  none: "${TERM_CSI}0m",
+  black: "${TERM_CSI}31m",
+  red: "${TERM_CSI}31m",
+  green: "${TERM_CSI}32m",
+  yellow: "${TERM_CSI}33m",
+  blue: "${TERM_CSI}34m",
+  magenta: "${TERM_CSI}35m",
+  cyan: "${TERM_CSI}36m",
+  white: "${TERM_CSI}37m",
+  default: "${TERM_CSI}39m",
+}
+
+proc run_csi (...ARGV) {
+  var self = _escapes # should be an input
+  var comm = self[ARGV[0]]
+  if (type(comm) === "Str") {
+    write --end '' $comm
+  } else {
+    if (len(ARGV)>1) {
+      call io->eval(comm, pos_args=ARGV[1:])
+    } else {
+      call io->eval(comm)
+    }
+  }
+}
+
+# TODO: Make Object(null, { ... })
+# to allow inspection!
+var _escapes = {
+  __invoke__: run_csi,
+  scroll_limit: ^(write --end '' "${TERM_CSI}$1;$2r"),
+  scroll_reset: "{TERM_CSI};r",
+  terminal_save: "${TERM_CSI}?1049h",
+  terminal_restore: "${TERM_CSI}?1049l",
+  cursor_hide: "${TERM_CSI}?25l",
+  cursor_show: "${TERM_CSI}?25h",
+  linewrap_disable: "${TERM_CSI}?7l",
+  linewrap_enable: "{TERM_CSI}?7h",
+  cursor_pos: ^(write --end '' "${TERM_CSI}$1;$2H"),
+  height: ^(
+    read -r LINES COLUMNS < <(stty size)
+    write --end '' $LINES
+    ),
+  width: ^(
+    # Get terminal size ('stty' is POSIX and always available).
+    # This can't be done reliably across all bash versions in pure bash.
+    read -r LINES COLUMNS < <(stty size)
+    write --end '' $COLUMNS
+    ),
+}
+
+# see https://en.m.wikipedia.org/wiki/Box-drawing_characters
+# l -> left
+# u -> up
+# r -> right
+# d -> down
+# 
+# l -> normal
+# ll -> dashed
+# L -> fat
+# LL -> double
+# Ll -> fat dashed
+var borders = {
+  lr: "─",
+  llrr: "┄",
+  LR: "━",
+  ud: "│",
+  uudd: "┆",
+  UD: "┃",
+  rd: "┌",
+  ld: "┐",
+  ur: "└",
+  ul: "┘",
+}
+
+setglobal _cursor_saves = []
+proc save-cursor() {
+    read -r h w < <(stty size)
+    call _cursor_saves->append([h,w])
+}
+proc restore-cursor() {
+  var h, w = _cursor_saves->pop()
+  run_csi cursor_pos $h $w
+}
+
+proc write-box-border(initheight, initwidth, height, width) {
+  run_csi cursor_pos $initheight $initwidth
+  var h = initheight
+  var w = initwidth
+
+  write --end $[borders.rd]
+  for i in (0..<width) {
+    write --end '' $[borders.lr]
+  }
+  write --end $[borders.ld]
+
+  for i in (0..<height) {
+    setvar h += 1
+    run_csi cursor_pos $h $w
+    write --end '' $[borders.ud]
+    run_csi cursor_pos $h $[w+width+1]
+    write --end '' $[borders.ud]
+  }
+
+  setvar h += 1
+  run_csi cursor_pos $h $w
+  write --end $[borders.ur]
+  for i in (0..<width) {
+    write --end '' $[borders.lr]
+  }
+  write --end $[borders.ul]
+}
+
+# Detect length of each character and split a string into chunks of same length.
+# Required for vertically fill a box
+# TODO: UTF-8, newlines and escape sequences have variable length!
+# See e.g. ble.sh or tmux code
+#func split-by-length(s, width, max) {
+# var i = 0
+# while (i<
+#
+#}
+
+# TODO: the boxfill should ignore (and remove certain) escapes)
+proc write-box-text(x, y, h, w, text;cut=true) {
+  var t = []
+  var tlen = len(text)
+  if (cut) {
+    for i, line in (text=>split(\n)) {
+      if (len(line) < w) {
+        call t->append(line)
+      } else {
+        call t->append(line[:w])
+      }
+      if (i >= h-1) { break }
+    }
+  } else {
+    call t->append("Not implemented")
+  }
+  run_csi cursor_pos $[x+1] $[y+1]
+  for i, line in (t) {
+    write --end '' $line
+    run_csi cursor_pos $[x+i+2] $[y+1]
+  }
+}
+
+proc box (x, y, w, h, t) {
+  write-box-border $x $y $w $h
+  write-box-text $x $y $w $h $t
+    run_csi cursor_pos $[x+h+1] 0
+}
