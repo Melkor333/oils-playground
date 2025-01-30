@@ -14,34 +14,17 @@ proc debug-val (name;val) {
 func mergeFacts (dst, src) {
   debug-val src (src)
   debug-val dst (dst)
-  for key, val in (src) {
-    case (type(dst=>get(key))) {
-      Null { setvar dst[key] = val }
-      List {
-        for i in (val) {
-          debug-val dst (dst[key])
-          debug-val val (val)
-          if (dst[key]=>indexOf(i) === -1) {
-            debug-val target (dst[key])
-            debug-val source (val)
-	          call dst[key]->append(i)
-            debug-val merged-target (dst[key])
-
-	        }
-        }
-      }
+  for fact in (src) {
+    if (dst=>indexOf(fact) === -1) {
+      call dst->append(fact)
     }
+  }
   debug-val src (src)
   debug-val dst (dst)
-  }
 }
 
 # a list of facts, against which the current needs to be checked
 var facts = []
-
-# predicates and their possible arguments
-# TODO: predicates might be variable length?
-var facts = {}
 var rules = []
 
 # a list of predicates and they're current choices
@@ -50,16 +33,16 @@ var current_set = {}
 proc - {
   var predicate = ARGV[0]
   assert [len(ARGV) > 1]
-  if (facts=>get(predicate) !== null) {
-    call facts[predicate]->append(ARGV[1:])
+  if (facts=>indexOf(ARGV) !== null) {
+    call facts->append(ARGV)
   } else {
-    setglobal facts[predicate] = [ARGV[1:]]
+    setglobal facts = [ARGV]
   }
 }
 proc WHEN {
   var pred = []
   var conditions = [] # [['edge', 'Y', 'X'], ... ]
-  var facts = []
+  var truths = []
   for i, arg in (ARGV) {
     if (arg === 'THEN') {
       var point = i+1
@@ -77,14 +60,14 @@ proc WHEN {
   setvar pred = []
   for i, arg in (ARGV[point:]) {
     if (arg === 'AND') {
-      call facts->append(pred)
+      call truths->append(pred)
       setvar pred = []
       continue
     }
     call pred->append(arg)
   }
-  call facts->append(pred)
-  call rules->append([conditions, facts])
+  call truths->append(pred)
+  call rules->append([conditions, truths])
   debug-val " rules" (rules)
 }
 
@@ -98,34 +81,39 @@ func evalConditions(conditions, truths, facts,...args) {
   debug-val args (args)
   debug-val facts (facts)
   for num_pred, arg in (args) {
-    assert [len(conditions[num_pred]) === len(arg)+1] # args need to match
+    assert [len(conditions[num_pred]) === len(arg)] # args need to match
     debug-val rule (conditions[num_pred])
-    for i, arg in (arg) {
+    # check conditions/fill in placeholders.
+    # TODO: pass down (by copy)
+    for i, val in (arg[1:]) {
       setvar param = conditions[num_pred][i+1]
       debug-val placeholders (placeholders)
-      debug-val arg (arg)
+      debug-val val (val)
       debug-val param (param)
       if (placeholders=>get(param) is not null) {
-        if (arg !== placeholders[param]) {
+        if (val !== placeholders[param]) {
       	  debug doesnt match:
 	        debug-val "condition" (conditions[num_pred])
-	        debug-val "arg" (arg)
+	        debug-val "val" (val)
           debug-val 'placeholders' (placeholders)
-	        return ({})
+	        return ([])
       	}
       } else {
-        setvar placeholders[param] = arg
+        setvar placeholders[param] = val
      	}
     }
   }
-  var new_facts = {}
-  debug-val nnew_facts (new_facts)
+  var new_facts = []
+  # Not all conditions are met yet
   if (len(args) < len(conditions)) {
-    debug-val "predicate of cur cond" (conditions[len(args)][0])
     # Loop over all facts we have for the args. Use it as argument
-    for f in (facts=>get(conditions[len(args)][0], [])) {
-      debug-val new_facts (new_facts)
-      debug-val args (args ++[f])
+    for f in (facts) {
+      # only use fact if it matches predicate
+      # of next unmet condition
+      if (f[0] !== conditions[len(args)][0]) {
+        continue
+      }
+      debug-val "new arg" ([f])
       call mergeFacts(new_facts, evalConditions(conditions, truths,facts, ...args, f))
       debug-val 'new_facts after merge' (new_facts)
 
@@ -136,18 +124,17 @@ func evalConditions(conditions, truths, facts,...args) {
     debug-val truths (truths)
     var fact
     for truth in (truths) {
-      setvar fact = []
+      debug-val "truth" (truth)
+      setvar fact = [truth[0]]
       for param in (truth[1:]) {
+        # TODO: Only use placeholder if capitalized
         call fact->append(placeholders[param])
       }
-      if (get(new_facts, truth[0]) is not null) {
-        call new_facts[truth[0]]->append(fact)
-      } else {
-        setvar new_facts[truth[0]] = [fact]
-      }
+      debug-val "new fact" (fact)
+      call new_facts->append(fact)
     }
   }
-  debug-val "nnnew facts" (new_facts)
+  debug-val "new facts" (new_facts)
   return (new_facts)
 }
 
