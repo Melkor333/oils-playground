@@ -1,14 +1,16 @@
 #!/usr/bin/env ysh
 
 var DEBUG = false
+setglobal ENV.FACTFD = $(mktemp facts.XXX)
+setglobal ENV.NEWFD = $(mktemp newfacts.XXX)
 proc debug {
   if (DEBUG) {
-    echo DEBUG - @[ARGV]
+    echo DEBUG - @[ARGV] >&2
   }
 }
 proc debug-val (name;val) {
   if (DEBUG) {
-    echo DEBUG $name - $(pp value (val))
+    echo DEBUG $name - $(pp value (val)) >&2
   }
 }
 func mergeFacts (dst, src) {
@@ -30,15 +32,18 @@ var rules = []
 # a list of predicates and they're current choices
 var current_set = {}
 
-proc - {
+proc - (...ARGV;;fd=ENV.FACTFD) {
   var predicate = ARGV[0]
   assert [len(ARGV) > 1]
-  if (facts=>indexOf(ARGV) !== null) {
+  debug-val "checking fact" (ARGV)
+  if (facts=>indexOf(ARGV) === -1) {
+    debug-val "new fact" (ARGV)
     call facts->append(ARGV)
-  } else {
-    setglobal facts = [ARGV]
+    debug-val "writing fact to" (fd)
+    write $(json write (ARGV) | tr -d '\n') >> $fd
   }
 }
+
 proc WHEN {
   var pred = []
   var conditions = [] # [['edge', 'Y', 'X'], ... ]
@@ -67,7 +72,10 @@ proc WHEN {
     call pred->append(arg)
   }
   call truths->append(pred)
-  call rules->append([conditions, truths])
+  for condition in (conditions) {
+    call rules->append([conditions, truths])
+    setvar conditions = [conditions[-1]] ++ conditions[:-1]
+  }
   debug-val " rules" (rules)
 }
 
@@ -79,7 +87,7 @@ func evalConditions(conditions, truths, facts,...args) {
   var param
   debug-val conditions (conditions)
   debug-val args (args)
-  debug-val facts (facts)
+  debug-val "current facts" (facts)
   for num_pred, arg in (args) {
     assert [len(conditions[num_pred]) === len(arg)] # args need to match
     debug-val rule (conditions[num_pred])
@@ -140,17 +148,64 @@ func evalConditions(conditions, truths, facts,...args) {
 
 source $[ARGV[0]]
 debug-val 'all facts' (facts)
+#for rule in (rules) {
+#  # todo facts per choice!
+#  # todo: loop again for all new facts. requires refactor!
+#  # loop over facts, not conditions...
+#  = rule
+#  call mergeFacts(facts, evalConditions(rule[0], rule[1], facts))
+#}
+var children = []
 for rule in (rules) {
   # todo facts per choice!
   # todo: loop again for all new facts. requires refactor!
   # loop over facts, not conditions...
-  = rule
-  call mergeFacts(facts, evalConditions(rule[0], rule[1], facts))
+  fork {
+    tail -f -n +0 $[ENV.FACTFD] | {
+      var facts = []
+      while (true) {
+        try { read --raw-line (&line) }
+        if (_error.code === 1) {
+          break
+        }
+        write $line | json read (&fact)
+        debug "rule got new fact"
+        debug-val rule (rule)
+        debug-val fact (fact)
+        call facts->append(fact)
+        # If predicate of first condition and fact are the same, do a loop
+        # with all the currently known facts
+        debug-val fact (fact)
+        debug-val "first condition" (rule[0][0])
+        if (fact[0] === rule[0][0][0]) {
+          var new_facts = evalConditions(rule[0], rule[1], facts, fact)
+          debug-val "New facts to add to global" (new_facts)
+          for fact in (new_facts) {
+            - @fact (fd=ENV.NEWFD)
+          }
+        }
+      }
+    }
+  }
+  call children->append($!)
 }
-for rule in (rules) {
-  # todo facts per choice!
-  # todo: loop again for all new facts. requires refactor!
-  # loop over facts, not conditions...
-  call mergeFacts(facts, evalConditions(rule[0], rule[1], facts))
+debug-val "FACTFD" (ENV.FACTFD)
+  # TODO: tail -f
+  while (true) {
+    # TODO: while woeking children
+    sleep 2
+    try { read --raw-line (&line) }
+    if (_error.code === 1) {
+      break
+    }
+    debug "Generated fact: $line"
+    write $line | json read (&fact)
+    - @fact (fd=ENV.FACTFD)
+  } < $[ENV.NEWFD]
+# TODO: wait for all processes to finish with some kind of semaphore
+for child in (children) {
+  kill $child
 }
 = facts
+rm $[ENV.FACTFD] $[ENV.NEWFD]
+

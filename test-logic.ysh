@@ -9,7 +9,6 @@
 - edge h l
 - edge i l
 - edge k j
-WHEN edge Y X THEN edge X Y
 
 - start a
 WHEN start X THEN reachable X 
@@ -18,3 +17,4 @@ WHEN start X THEN reachable X
   AND edge X Y
   THEN reachable Y
   ;
+WHEN edge Y X THEN edge X Y
