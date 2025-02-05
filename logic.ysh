@@ -1,4 +1,5 @@
 #!/usr/bin/env ysh
+# https://dusa.rocks/docs/introductions/asp/
 
 var DEBUG = false
 var DEBUGLVL = 2
