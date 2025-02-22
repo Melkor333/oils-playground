@@ -1,0 +1,64 @@
+#!/usr/bin/env ysh
+
+# Weird name, provides 'log' and 'die'
+#source --builtin osh/two.sh
+
+proc _haynode (...args;self;;block) {
+  var type 
+  var out = {
+    type: self.name,
+    args: args
+  }
+  var c = {children: []}
+  ctx push (c) {
+    var attrs = io->evalToDict(block)
+  }
+  setvar out.attrs = attrs
+  setvar out.children = c.children
+  ctx emit children (out)
+}
+
+var _hayProto = Object(null, {__invoke__:_haynode})
+#proc define (name) {
+   # TODO: Fails "global" not found
+#  call setVar(name, Object(_hayProto, {name:name}), global=true)
+#}
+
+proc readHayFile (;file, out) {
+  var code = $(cat $file)
+  var block = parseCommand(code)
+  var o = {}
+  ctx push (o) {
+    call io->eval(block)
+  }
+  call out->setValue(o)
+}
+
+#$ x abc {
+#> Y {
+#>   echo lol
+#> }
+#> y a b c
+#> }
+#
+#(Dict)
+#{
+#    source: null,
+#    children: [
+#        {
+#            type: 'x',
+#            args: ['abc'],
+#            children: [
+#                {
+#                    type: 'Y',
+#                    args: [],
+#                    location_str: '[ interactive ]',
+#                    location_start_line: 4,
+#                    code_str: b'   \n  echo lol\n'
+#                },
+#                {type: 'y', args: ['a', 'b', 'c']}
+#            ],
+#            attrs: {}
+#        }
+#    ]
+#}

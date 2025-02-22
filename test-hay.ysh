@@ -1,0 +1,16 @@
+#!/usr/bin/env ysh
+
+source hay.ysh
+var _hayProto = Object(null, {__invoke__:_haynode})
+call setVar("x", Object(_hayProto, {name:'x'}))
+call setVar("y", Object(_hayProto, {name:'y'}))
+var _hay = {}
+ctx push children (_hay) {
+  x a b c {
+    var x = 5
+    # just can't be serialized yet
+    proc lol { echo lol }
+    y a b c { var z = 5 }
+  }
+}
+= _hay
