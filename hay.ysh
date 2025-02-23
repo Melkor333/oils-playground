@@ -2,6 +2,7 @@
 
 # Weird name, provides 'log' and 'die'
 #source --builtin osh/two.sh
+use ./ctx.ysh
 
 proc _haynode (...args;self;;block) {
   var type 
@@ -13,16 +14,18 @@ proc _haynode (...args;self;;block) {
   ctx push (c) {
     var attrs = io->evalToDict(block)
   }
-  setvar out.attrs = attrs
+  #setvar out.attrs = attrs
   setvar out.children = c.children
   ctx emit children (out)
 }
 
 var _hayProto = Object(null, {__invoke__:_haynode})
-#proc define (name) {
-   # TODO: Fails "global" not found
-#  call setVar(name, Object(_hayProto, {name:name}), global=true)
-#}
+proc define (name) {
+  call setVar(name, Object(_hayProto, {name:name}), global=true)
+}
+proc get (;out) {
+  ctx get (out)
+}
 
 proc readHayFile (;file, out) {
   var code = $(cat $file)
@@ -62,3 +65,4 @@ proc readHayFile (;file, out) {
 #        }
 #    ]
 #}
+var __provide__ = :| define get |
