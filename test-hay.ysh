@@ -1,8 +1,8 @@
-#!/usr/bin/env ysh
+# use
+# ysh hay.ysh test-hay.ysh
 
 # setValue(global) doesnt work in module
 # use hay.ysh
-source hay.ysh
 define x
 define y
 x a b c {
@@ -11,5 +11,3 @@ x a b c {
   proc lol { echo lol }
   y a b c { var z = 5 }
 }
-get (&_hay)
-= _hay

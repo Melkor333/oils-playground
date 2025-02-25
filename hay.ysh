@@ -27,42 +27,12 @@ proc get (;out) {
   ctx get (out)
 }
 
-proc readHayFile (;file, out) {
-  var code = $(cat $file)
-  var block = parseCommand(code)
-  var o = {}
-  ctx push (o) {
-    call io->eval(block)
-  }
-  call out->setValue(o)
-}
-
-#$ x abc {
-#> Y {
-#>   echo lol
-#> }
-#> y a b c
-#> }
-#
-#(Dict)
-#{
-#    source: null,
-#    children: [
-#        {
-#            type: 'x',
-#            args: ['abc'],
-#            children: [
-#                {
-#                    type: 'Y',
-#                    args: [],
-#                    location_str: '[ interactive ]',
-#                    location_start_line: 4,
-#                    code_str: b'   \n  echo lol\n'
-#                },
-#                {type: 'y', args: ['a', 'b', 'c']}
-#            ],
-#            attrs: {}
-#        }
-#    ]
-#}
 var __provide__ = :| define get |
+
+if is-main {
+  var code = $(cat $[ARGV[0]])
+  var block = parseCommand(code)
+  call io->eval(block)
+  get (&h)
+  = h
+}
