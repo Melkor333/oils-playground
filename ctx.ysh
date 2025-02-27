@@ -8,8 +8,7 @@ proc push (; context;; block) {
 
   call contextStack->append(context)
   var frame = vm.getFrame(-2)
-    #use ///ysh/ctx.ysh
-    call io->eval(block)
+  call io->eval(block)
   call contextStack->pop()
   #return $[_error.code]
 }

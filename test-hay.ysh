@@ -4,10 +4,12 @@
 # setValue(global) doesnt work in module
 # use hay.ysh
 define x
-define y
+define y/q
 x a b c {
   var x = 5
   # just can't be serialized yet
   proc lol { echo lol }
-  y a b c { var z = 5 }
+}
+y a b c {
+  q { echo "bad!" }
 }

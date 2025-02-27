@@ -5,23 +5,44 @@
 use ./ctx.ysh
 
 proc _haynode (...args;self;;block) {
-  var type 
+  # not self.parent! current target!
+  if (self.parent !== haystack[-1]) {
+    error "$[self.name] is not allowed inside node with id $[haystack[-1]]"
+  }
+  call haystack->append(vm.id(self))
   var out = {
     type: self.name,
     args: args
   }
   var c = {children: []}
+  var attrs
   ctx push (c) {
-    var attrs = io->evalToDict(block)
+    setvar attrs = io->evalToDict(block, vars=self.definitions)
   }
-  #setvar out.attrs = attrs
+  setvar out.attrs = attrs
   setvar out.children = c.children
   ctx emit children (out)
+  call haystack->pop()
 }
 
 var _hayProto = Object(null, {__invoke__:_haynode})
-proc define (name) {
-  call setVar(name, Object(_hayProto, {name:name}), global=true)
+var root = Object(_hayProto, {name: 'root', definitions: {}, parent:null})
+setglobal haystack = [vm.id(root)]
+proc define (namestring; parent=null) {
+  if (parent is null) {
+    setvar parent = root
+  }
+  var names = namestring=>split('/', count=1)
+  if (names[0] not in parent.definitions) {
+    setvar parent.definitions[names[0]] = Object(_hayProto, {name:names[0], definitions: {}, parent: vm.id(parent)})
+    if (parent is root) {
+      # put it in current namespace if we're in root
+      call setVar(names[0], parent.definitions[names[0]], global=true)
+    }
+  }
+  if (len(names) === 2) {
+    define $[names[1]] (parent.definitions[names[0]])
+  }
 }
 proc get (;out) {
   ctx get (out)
