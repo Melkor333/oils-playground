@@ -1,7 +1,8 @@
 #!/usr/bin/env ysh
 # https://dusa.rocks/docs/introductions/asp/
 
-var DEBUGLVL = 2
+var DEBUGLVL = 3
+setglobal MAX_PROC = 10
 var temp = $(mktemp -d)
 setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
 setglobal ENV.NEWFD = $(mktemp $temp/newfacts.XXX)
@@ -9,11 +10,11 @@ setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
 setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
 proc debug {
 if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  echo ${#FUNCNAME[@]} DEBUG - @[ARGV] >&2
+  echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]} - @[ARGV] >&2
 }
 proc debug-val (name;val) {
 if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  echo ${#FUNCNAME[@]} DEBUG $name - $(pp value (val)) >&2
+  echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
 }
 func mergeFacts (dst, src) {
   debug-val src (src)
@@ -33,149 +34,100 @@ var facts = []
 # a list of predicates and they're current choices
 var current_set = {}
 
+# get arguments and split predicate, IS, forbid, demand
+# used by - and when/then
+func split_pred(...ARGV) {
+  var items = [[]]
+  var cur = 0
+  for i in (ARGV) {
+    call items[cur]->append(i)
+  }
+  return (items)
+}
+
+# FACTS
 proc - (...ARGV;;fd=ENV.FACTFD) {
   var predicate = ARGV[0]
   assert [len(ARGV) > 1]
   debug-val "checking fact" (ARGV)
-  if (facts=>indexOf(ARGV) === -1) {
-    debug-val "new fact" (ARGV)
-    call facts->append(ARGV)
-    debug-val "writing fact to" (fd)
-    write $(json write (ARGV) | tr -d '\n') >> $fd
+  var args = split_pred(ARGV)
+  for arg in (args) {
+    if (facts=>indexOf(ARGV) === -1) {
+      debug-val "new fact" (ARGV)
+      call facts->append(ARGV)
+      debug-val "writing fact to" (fd)
+      write $(json write (ARGV) | tr -d '\n') >> $fd
+    }
   }
 }
 
-proc WHEN {
-  var pred = []
-  var conditions = [] # [['edge', 'Y', 'X'], ... ]
-  var truths = []
-  for i, arg in (ARGV) {
-    if (arg === 'THEN') {
-      var point = i+1
-      break
-    }
-    if (arg === 'AND') {
-      call conditions->append(pred)
-      setvar pred = []
-      continue
-    }
-    call pred->append(arg)
-  }
-
-  call conditions->append(pred)
-  setvar pred = []
-  for i, arg in (ARGV[point:]) {
-    if (arg === 'AND') {
-      call truths->append(pred)
-      setvar pred = []
-      continue
-    }
-    call pred->append(arg)
-  }
-  call truths->append(pred)
-  for condition in (conditions) {
-    fork {
-      tail -f -n +0 $[ENV.FACTFD] | {
-        var facts = []
-        var lockfile = $(mktemp -up $[ENV.LOCKDIR] rule.XXXXXXXXXX)
-        while (true) {
-          try { read --raw-line (&line) }
-          if (_error.code === 1) {
-            break
-          }
-          touch $lockfile
-          debug "touched $lockfile"
-          write $line | json read (&fact)
-          debug "rule got new fact"
-          debug-val fact (fact)
-          call facts->append(fact)
-          # If predicate of first condition and fact are the same, do a loop
-          # with all the currently known facts
-          debug-val fact (fact)
-          debug-val "first condition" (conditions[0])
-          if (fact[0] === conditions[0][0]) {
-            var new_facts = evalConditions(conditions, truths, facts, fact)
-            debug-val "New facts to add to global" (new_facts)
-            for fact in (new_facts) {
-              - @fact (fd=ENV.NEWFD)
-            }
-          }
-          rm $lockfile
-          debug "removed $lockfile"
+proc WHEN (...condition;;;block) {
+    tail -f -n +0 $[ENV.FACTFD] | {
+      var facts = []
+      var lockfile = $(mktemp -u $[ENV.LOCKDIR]/rule.XXXXXXXXXX)
+      while (true) {
+        try { read --raw-line (&line) }
+        if (_error.code === 1) {
+          break
         }
+        touch $lockfile
+        debug "touched $lockfile"
+        write $line | json read (&fact)
+        debug "rule got new fact"
+        debug-val fact (fact)
+        call facts->append(fact)
+        # If predicate of first condition and fact are the same, do a loop
+        # with all the currently known facts
+        debug-val fact (fact)
+        debug-val "condition" (condition)
+        if (fact[0] === condition[0]) {
+          evalCondition (condition, block, facts, fact)
+        }
+        rm $lockfile
+        debug "removed $lockfile"
       }
-    }
-    #call children->append($!)
-    echo $! >> $[ENV.PSFD]
-    setvar conditions = [conditions[-1]] ++ conditions[:-1]
   }
+  echo $! >> $[ENV.PSFD]
 }
 
 # cond -> Condition to be evaluated [[[COND1][COND2]], [[FACT1],[FACT2]]]
 # facts -> Existing facts [[FACT],[FACT],...]
 # pred -> List of already defined predicates to meet condition
-func evalConditions(conditions, truths, facts,...args) {
+proc evalCondition(;condition, block, facts, fact) {
   var placeholders = {}
   var param
-  debug-val conditions (conditions)
-  debug-val args (args)
   debug-val "current facts" (facts)
-  for num_pred, arg in (args) {
-    assert [len(conditions[num_pred]) === len(arg)] # args need to match
-    debug-val rule (conditions[num_pred])
-    # check conditions/fill in placeholders.
-    # TODO: pass down (by copy)
-    for i, val in (arg[1:]) {
-      setvar param = conditions[num_pred][i+1]
-      debug-val placeholders (placeholders)
-      debug-val val (val)
-      debug-val param (param)
+  assert [len(condition) === len(fact)] # args need to match
+  # check conditions/fill in placeholders.
+  # TODO: pass down (by copy)
+  for i, val in (fact) {
+    setvar param = condition[i]
+    debug-val placeholders (placeholders)
+    debug-val val (val)
+    debug-val param (param)
+    # replace/check placeholders
+    if (param=>startsWith(/ [ 'A'-'Z' ] /)) {
       if (placeholders=>get(param) is not null) {
         if (val !== placeholders[param]) {
-      	  debug doesnt match:
-	        debug-val "condition" (conditions[num_pred])
-	        debug-val "val" (val)
+          debug doesnt match:
+          debug-val "condition" (conditions[num_pred])
+          debug-val "val" (val)
           debug-val 'placeholders' (placeholders)
-	        return ([])
-      	}
-      } else {
-        setvar placeholders[param] = val
-     	}
+            return
+        } else {
+	  continue
+	}
+      }
+      setvar placeholders[param] = val
+    } elif (param === val) {
+      continue
+    } else {
+      debug "$param !== $val, aborting"
+      return
     }
   }
-  var new_facts = []
-  # Not all conditions are met yet
-  if (len(args) < len(conditions)) {
-    # Loop over all facts we have for the args. Use it as argument
-    for f in (facts) {
-      # only use fact if it matches predicate
-      # of next unmet condition
-      if (f[0] !== conditions[len(args)][0]) {
-        continue
-      }
-      debug-val "new arg" ([f])
-      call mergeFacts(new_facts, evalConditions(conditions, truths,facts, ...args, f))
-      debug-val 'new_facts after merge' (new_facts)
-
-    }
-  } else {
-    #echo 'add placeholders!'
-    debug-val placeholders (placeholders)
-    debug-val truths (truths)
-    var fact
-    for truth in (truths) {
-      debug-val "truth" (truth)
-      setvar fact = [truth[0]]
-      for param in (truth[1:]) {
-        # TODO: Only use placeholder if capitalized
-        call fact->append(placeholders[param])
-      }
-      debug-val "new fact" (fact)
-      call new_facts->append(fact)
-    }
-  }
-  debug-val "new facts" (new_facts)
-  return (new_facts)
+  debug-val 'placeholders' (placeholders)
+  { call io->eval(block, vars=placeholders) } &
 }
 
 source $[ARGV[0]]
@@ -207,14 +159,16 @@ while (true) {
       break
     } else {
       debug waiting
-      sleep 0.1 # give time for rules to start
+      sleep 0.4 # give time for rules to start
       setvar wait = true
+      find $temp
+      continue
     }
   }
   debug "Generated fact: $line"
   try { write $line | json read (&fact) }
   if (_error.code === 1) {
-    debug "fsilure to read?!"
+    debug "failure to read?! $line"
     continue
   }
 
@@ -232,3 +186,39 @@ redir < $[ENV.PSFD] {
 }
 = facts
 debug $(rm -rv $temp)
+
+# NEW IDEA
+#--------------------------------------------------
+# External Objects
+# factsfd -> file with all facts (for multiple workers)
+# newfd -> file (could be a fifo) where workers pass new filedesceiptors
+# condfd -> where new conditions are spawned
+# lockdir -> workers create a lockfile when processing facts/conditions
+#--------------------------------------------------
+# Internal Objects
+# Condition -> dict, unique
+#   facts -> id of factlist
+#   condition -> what needs to be true
+#   statement -> what to execute when condition is met
+#
+# facts -> list, one per process (main + worker)
+#   0 = facts.
+#   1+ = possibilities. might be nulled atany point in time.
+#
+# conditionlist -> array, main worker
+#   list of confition.condition to not allow the same condition twice
+#
+
+# ==================================================
+#
+# main proc
+# -> gather and dedupe new facts (optionally separate)
+# -> gather new conditions (optionally separate)
+#    -> feed them to worker
+# -> if no lockfile: stop workers, cleanup
+#
+#--------------------------------------------------
+# worker process
+# -> check for new conditionals
+#    until cond->index == worker->index: process facts
+# -> for new fact, for condition: process fact

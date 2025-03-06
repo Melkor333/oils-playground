@@ -1,0 +1,28 @@
+- edge a b # a   f--k--j
+- edge a c # | \    | 
+- edge b c # b--c   g  h
+- edge b d # |  |      |
+- edge c e # d--e   i--l
+- edge d e
+- edge f k
+- edge g k
+- edge h l
+- edge i l
+- edge k j
+
+- start a
+- start f
+- start g
+WHEN start X { - reachable $X $X }
+WHEN reachable Z X {
+  WHEN edge $X Y {
+    - reachable $Z $Y
+  }
+}
+WHEN edge Y X { - edge $X $Y }
+# WHEN start X '- reachable $X $X'
+# WHEN reachable Z X '''
+#   WHEN edge $X Y '- reachable $Z $Y'
+#   }
+# '''
+# WHEN edge Y X '- edge $X $Y'

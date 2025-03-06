@@ -1,0 +1,13 @@
+- color 1 4 is "black".
+- color 2 1 is "black".
+- color 3 8 is "red".
+- color 4 3 is "black".
+- color 5 4 is "red".
+
+# error!
+#- color 1 4 is "red".
+# maybe -> open choice
+# in -> closed choice
+# if color X _ then maybe height X
+# #forbid / #
+# if height X and height Y and [$X > $Y] then #forbid height Y
