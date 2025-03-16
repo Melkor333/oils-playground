@@ -1,10 +1,9 @@
 #!/usr/bin/env ysh
-
 # Weird name, provides 'log' and 'die'
 #source --builtin osh/two.sh
 use ./ctx.ysh
 
-proc _haynode (...args;self;;block) {
+proc _haynode (...args;self;;block=null) {
   # not self.parent! current target!
   if (self.parent !== haystack[-1]) {
     error "$[self.name] is not allowed inside node with id $[haystack[-1]]"
@@ -14,46 +13,98 @@ proc _haynode (...args;self;;block) {
     type: self.name,
     args: args
   }
-  var c = {children: []}
-  var attrs
-  ctx push (c) {
-    setvar attrs = io->evalToDict(block, vars=self.definitions)
+  if (block is not null) {
+    var c = {children: []}
+    var attrs
+    shopt -u errexit
+    try {
+      ctx push (c) {
+          setvar attrs = io->evalToDict(block, vars=self.definitions)
+      }
+    }
+    shopt -s errexit
+    if (_error.code !== 0) {
+    echo FAIL!
+      return 127
+    }
+    setvar out.attrs = attrs
+    setvar out.children = c.children
   }
-  setvar out.attrs = attrs
-  setvar out.children = c.children
   ctx emit children (out)
   call haystack->pop()
 }
 
 var _hayProto = Object(null, {__invoke__:_haynode})
 var root = Object(_hayProto, {name: 'root', definitions: {}, parent:null})
+
 setglobal haystack = [vm.id(root)]
-proc define (namestring; parent=null) {
-  if (parent is null) {
-    setvar parent = root
+
+proc define (...definitions; parent=root) {
+  if (len(definitions) < 1) {
+    echo "need at least 1 argument" >&2
+    return 2
   }
-  var names = namestring=>split('/', count=1)
-  if (names[0] not in parent.definitions) {
-    setvar parent.definitions[names[0]] = Object(_hayProto, {name:names[0], definitions: {}, parent: vm.id(parent)})
-    if (parent is root) {
-      # put it in current namespace if we're in root
-      call setVar(names[0], parent.definitions[names[0]], global=true)
+
+  for definition in (definitions) {
+    if (definition === '--') {
+      continue
+    }
+    var names = definition=>split('/', count=1)
+    if (names[0] not in parent.definitions) {
+      setvar parent.definitions[names[0]] = Object(_hayProto, {name:names[0], definitions: {}, parent: vm.id(parent)})
+      if (parent is root) {
+        # put it in current namespace if we're in root
+        call setVar(names[0], parent.definitions[names[0]], global=true)
+      }
+    }
+    if (len(names) === 2) {
+      define $[names[1]] (parent.definitions[names[0]])
     }
   }
-  if (len(names) === 2) {
-    define $[names[1]] (parent.definitions[names[0]])
-  }
-}
-proc get (;out) {
-  ctx get (out)
 }
 
-var __provide__ = :| define get |
+setglobal evalLevel = 0
+proc eval (;out;;block=null) {
+  if (evalLevel > 0 ) {
+    echo "Can't nest hay eval!" >&2
+    return 127
+  }
+  setglobal evalLevel += 1
+  if (block is null) {
+    ctx get (out)
+  } else {
+    var o = {}
+    try {
+      ctx push (o;;block)
+    }
+    if (_error.code !== 0) {
+    echo FAIL!
+      return 127
+    }
+
+    call out->setValue(o)
+  }
+  setglobal evalLevel -= 1
+}
+
+proc reset (;node=root) {
+  # let the GC take care?
+  for name, child in (node.definitions) {
+    reset (child)
+    # delete from toplevel
+    if (node is root) {
+      unset $[child.name]
+    }
+    call node.definitions->erase(name)
+  }
+}
+
+var __provide__ = :| define eval reset |
 
 if is-main {
   var code = $(cat $[ARGV[0]])
   var block = parseCommand(code)
   call io->eval(block)
-  get (&h)
+  eval (&h)
   = h
 }
