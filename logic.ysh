@@ -16,48 +16,22 @@ proc debug-val (name;val) {
 if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
   echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
 }
-func mergeFacts (dst, src) {
-  debug-val src (src)
-  debug-val dst (dst)
-  for fact in (src) {
-    if (dst=>indexOf(fact) === -1) {
-      call dst->append(fact)
-    }
-  }
-  debug-val src (src)
-  debug-val dst (dst)
-}
 
 # a list of facts, against which the current needs to be checked
 var facts = []
 
-# a list of predicates and they're current choices
+# a list of predicates and they're atoms
 var current_set = {}
 
-# get arguments and split predicate, IS, forbid, demand
-# used by - and when/then
-func split_pred(...ARGV) {
-  var items = [[]]
-  var cur = 0
-  for i in (ARGV) {
-    call items[cur]->append(i)
-  }
-  return (items)
-}
 
 # FACTS
 proc - (...ARGV;;fd=ENV.FACTFD) {
-  var predicate = ARGV[0]
-  assert [len(ARGV) > 1]
-  debug-val "checking fact" (ARGV)
-  var args = split_pred(ARGV)
-  for arg in (args) {
-    if (facts=>indexOf(ARGV) === -1) {
-      debug-val "new fact" (ARGV)
-      call facts->append(ARGV)
-      debug-val "writing fact to" (fd)
-      write $(json write (ARGV) | tr -d '\n') >> $fd
-    }
+  debug-val "deduping fact" (ARGV)
+  if (facts=>indexOf(ARGV) === -1) {
+    debug-val "new fact" (ARGV)
+    call facts->append(ARGV)
+    debug-val "writing fact to" (fd)
+    write $(json write (ARGV) | tr -d '\n') >> $fd
   }
 }
 
@@ -130,12 +104,11 @@ proc evalCondition(;condition, block, facts, fact) {
   { call io->eval(block, vars=placeholders) } &
 }
 
+# TODO: pass this to worker proc
 source $[ARGV[0]]
-debug-val 'all facts' (facts)
-#var children = []
 
-debug-val "FACTFD" (ENV.FACTFD)
 var wait = false
+# main process
 while (true) {
   # TODO: while working children
   fork { inotifywait -t 2 -qqre DELETE $[ENV.LOCKDIR] }
