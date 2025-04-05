@@ -118,7 +118,7 @@ proc write-html (html) {
 }
 
 proc list-dir (dir, slug) {
-  write-html $(cd $dir; tree -H ./$slug)
+  write-html $(cd $dir; tree -H $slug)
 }
 
 proc return-file () {
