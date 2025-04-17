@@ -6,23 +6,20 @@
 - edge d e
 - edge f k
 - edge g k
+- edge k j
 - edge h l
 - edge i l
-- edge k j
 
 - start a
 - start f
-- start g
-WHEN start X { - reachable $X $X }
-WHEN reachable Z X {
-  WHEN edge $X Y {
-    - reachable $Z $Y
+- start l
+WHEN reachable Start First {
+  WHEN edge $First Second {
+    - reachable $Start $Second
+  }
+  WHEN edge Second $First {
+    - reachable $Start $Second
   }
 }
-WHEN edge Y X { - edge $X $Y }
-# WHEN start X '- reachable $X $X'
-# WHEN reachable Z X '''
-#   WHEN edge $X Y '- reachable $Z $Y'
-#   }
-# '''
-# WHEN edge Y X '- edge $X $Y'
+WHEN edge One Two { - edge $Two $One }
+WHEN start X { - reachable $X $X }
