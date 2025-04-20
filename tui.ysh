@@ -1,5 +1,10 @@
 var TERM_CR  = u'\u{0D}'
 var TERM_ESC = u'\u{1B}'
+var line_clear_key = $(tput el)
+# Get terminal size ('stty' is POSIX and always available).
+# This can't be done reliably across all bash versions in pure bash.
+# TODO: hook to update on change
+read -r TERM_HEIGHT TERM_WIDTH < <(stty size)
 var TERM_CSI = "$TERM_ESC["
 var COL = {
   none: "${TERM_CSI}0m",
@@ -38,19 +43,12 @@ var _escapes = {
   terminal_restore: "${TERM_CSI}?1049l",
   cursor_hide: "${TERM_CSI}?25l",
   cursor_show: "${TERM_CSI}?25h",
+  line_clear: line_clear_key,
   linewrap_disable: "${TERM_CSI}?7l",
   linewrap_enable: "{TERM_CSI}?7h",
   cursor_pos: ^(write --end '' "${TERM_CSI}$1;$2H"),
-  height: ^(
-    read -r LINES COLUMNS < <(stty size)
-    write --end '' $LINES
-    ),
-  width: ^(
-    # Get terminal size ('stty' is POSIX and always available).
-    # This can't be done reliably across all bash versions in pure bash.
-    read -r LINES COLUMNS < <(stty size)
-    write --end '' $COLUMNS
-    ),
+  height: TERM_HEIGHT,
+  width: TERM_WIDTH,
 }
 
 # see https://en.m.wikipedia.org/wiki/Box-drawing_characters
@@ -85,6 +83,39 @@ proc save-cursor() {
 proc restore-cursor() {
   var h, w = _cursor_saves->pop()
   run_csi cursor_pos $h $w
+}
+
+setglobal LAST_LOG_LENGTH = 0
+proc log-with-footer (log, ...footer) {
+  ### Log a line to stdout but retain the last FOOTER_LINES lines
+  #save-cursor
+  var height = $(run_csi height)
+  var width = $(run_csi width)
+  var footer_lines = []
+  for line in (footer) {
+    setvar footer_lines = footer_lines ++ line=>split(u'\n')
+  }
+
+  #echo $[height - LAST_LOG_LENGTH]
+  run_csi cursor_pos $[height - LAST_LOG_LENGTH + 1] 0
+  run_csi linewrap_disable
+  write $log
+  var lines = len(footer_lines)
+  for i, line in (footer_lines) {
+    run_csi line_clear
+    if (i === lines-1) {
+      write --end '' $line
+      continue
+    }
+    if (len(line) >= width) {
+      write $[line[:width]]
+    } else {
+      write $line
+    } 
+  }
+  #echo OK3
+  #restore-cursor
+  setglobal LAST_LOG_LENGTH = lines
 }
 
 proc write-box-border(initheight, initwidth, height, width) {

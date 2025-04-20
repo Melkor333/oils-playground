@@ -1,20 +1,40 @@
 #!/usr/bin/env ysh
 # https://dusa.rocks/docs/introductions/asp/
 
-var DEBUGLVL = 3
+var DEBUGLVL = 5
 var DEBUG_VARS = :||
+setglobal nesting = 0
 setglobal WORKER = false
 setglobal MAX_PROC = 10
-var temp = $(mktemp -d)
-setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
-setglobal ENV.NEWFD = $(mktemp $temp/newfacts.XXX)
-setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
-setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
+#var temp = $(mktemp -d)
+#setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
+setglobal ENV.FACTFD = null
+#setglobal ENV.NEWFD = $(mktemp $temp/newfacts.XXX)
+#setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
+#setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
 
+
+setglobal evaluated_conditions = 0
+setglobal evaluated_blocks = 0
+setglobal duplicate_when = 0
+setglobal duplicate_facts = 0
+
+# DO NOT USE.
+# CAUSES SEGFAULTS! ?!
+source tui.ysh
+proc stats {
+  ... log-with-footer
+    "$[ARGV=>join(' ')]"
+    "Conditions: $[len(conditions)] facts: $[len(FACTS)]"
+    "Evaluated conditions: $evaluated_conditions Evaluated blocks: $evaluated_blocks"
+    #abc
+    "duplicate WHEN: $duplicate_when duplicate facts: $duplicate_facts"
+    ;
+}
 
 proc debug {
 if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]} - @[ARGV] >&2
+  stats "${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]} - $[ARGV=>join(' ')]"
 }
 
 proc debug-val (name;val) {
@@ -22,7 +42,8 @@ proc debug-val (name;val) {
     return
   }
   if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
+  #echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
+  stats "${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val))"
 }
 
 # a list of facts, against which the current needs to be checked
@@ -41,6 +62,8 @@ proc - (...ARGV;;fd=ENV.FACTFD) {
       debug-val "writing fact to" (fd)
       write $(json write (ARGV) | tr -d '\n') >> $fd
     }
+  } else {
+    setglobal duplicate_facts += 1
   }
 }
 
@@ -68,8 +91,11 @@ proc WHEN (pred, ...condition;;;block) {
       debug-val "fact" (fact)
       if (fact[0] === conditionSet[0][0]) {
         evalCondition (conditionSet[0], conditionSet[1], fact)
+        debug-val "facts" (FACTS)
       }
     }
+  } else {
+    setglobal duplicate_when += 1
   }
 }
 
@@ -101,6 +127,7 @@ proc work() {
       var FACTS = []
     }
 
+    #var lockfile = $(mktemp -u $[ENV.LOCKDIR]/rule.XXXXXXXXXX)
     while (true) {
       if (WORKER) {
         var fact = readFact(newfacts)
@@ -132,6 +159,7 @@ proc work() {
 # check if a fact matches a condition and execute the block if it does
 # fact -> the fact to be checked
 proc evalCondition(;condition, block, fact) {
+  setglobal evaluated_conditions += 1
   var placeholders = {}
   var param
 
@@ -151,15 +179,24 @@ proc evalCondition(;condition, block, fact) {
 	  continue
 	}
       }
+      debug-val param (param)
+      debug param is null
       setvar placeholders[param] = val
+      debug-val placeholders (placeholders)
     } elif (param === val) {
+      debug param is correct
       continue
     } else {
       debug "$param !== $val, aborting"
       return
     }
   }
+  #debug-val 'placeholders' (placeholders)
+  setglobal nesting += 1
+  setglobal evaluated_blocks += 1
+  debug-val nesting (nesting)
   call io->eval(block, vars=placeholders)
+  setglobal nesting -= 1
 }
 
 source $[ARGV[0]]
@@ -216,6 +253,7 @@ work
 #  }
 #}
 #debug $(rm -rv $temp)
+echo
 = FACTS
 
 # NEW IDEA
