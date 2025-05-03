@@ -24,7 +24,6 @@ proc _haynode (...args;self;;block=null) {
     }
     shopt -s errexit
     if (_error.code !== 0) {
-    echo FAIL!
       return 127
     }
     setvar out.attrs = attrs
@@ -55,6 +54,12 @@ proc define (...definitions; parent=root) {
       if (parent is root) {
         # put it in current namespace if we're in root
         call setVar(names[0], parent.definitions[names[0]], global=true)
+	# doesnt work because names and parent are missing in the frame...
+        #var block = ^(call setVar(names[0], parent.definitions[names[0]], global=true);)
+	# this would allow top-level hay
+	#var frame = vm.getFrame(-2)
+	#call io->evalInFrame(block, frame)
+
       }
     }
     if (len(names) === 2) {
@@ -74,11 +79,11 @@ proc eval (;out;;block=null) {
     ctx get (out)
   } else {
     var o = {}
+    var b = ^(call io->eval(block, vars=root.definitions);)
     try {
-      ctx push (o;;block)
+      ctx push (o;;b)
     }
     if (_error.code !== 0) {
-    echo FAIL!
       return 127
     }
 
