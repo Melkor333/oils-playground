@@ -1,116 +1,177 @@
 #!/usr/bin/env ysh
 # https://dusa.rocks/docs/introductions/asp/
 
-var DEBUGLVL = 3
+var DEBUGLVL = 5
+var DEBUG_VARS = :||
+setglobal nesting = 0
+setglobal WORKER = false
 setglobal MAX_PROC = 10
-var temp = $(mktemp -d)
-setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
-setglobal ENV.NEWFD = $(mktemp $temp/newfacts.XXX)
-setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
-setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
+#var temp = $(mktemp -d)
+#setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
+setglobal ENV.FACTFD = null
+#setglobal ENV.NEWFD = $(mktemp $temp/newfacts.XXX)
+#setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
+#setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
+
+
+setglobal evaluated_conditions = 0
+setglobal evaluated_blocks = 0
+setglobal duplicate_when = 0
+setglobal duplicate_facts = 0
+
+# DO NOT USE.
+# CAUSES SEGFAULTS! ?!
+source tui.ysh
+proc stats {
+  ... log-with-footer
+    "$[ARGV=>join(' ')]"
+    "Conditions: $[len(conditions)] facts: $[len(FACTS)]"
+    "Evaluated conditions: $evaluated_conditions Evaluated blocks: $evaluated_blocks"
+    #abc
+    "duplicate WHEN: $duplicate_when duplicate facts: $duplicate_facts"
+    ;
+}
+
 proc debug {
 if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]} - @[ARGV] >&2
+  stats "${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]} - $[ARGV=>join(' ')]"
 }
+
 proc debug-val (name;val) {
-if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
-}
-func mergeFacts (dst, src) {
-  debug-val src (src)
-  debug-val dst (dst)
-  for fact in (src) {
-    if (dst=>indexOf(fact) === -1) {
-      call dst->append(fact)
-    }
+  if (DEBUG_VARS=>indexOf(name) === -1) {
+    return
   }
-  debug-val src (src)
-  debug-val dst (dst)
+  if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
+  #echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
+  stats "${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val))"
 }
 
 # a list of facts, against which the current needs to be checked
-var facts = []
+setglobal FACTS = []
+setglobal cursor = 0
+setglobal PROCS = 1
 
-# a list of predicates and they're current choices
-var current_set = {}
-
-# get arguments and split predicate, IS, forbid, demand
-# used by - and when/then
-func split_pred(...ARGV) {
-  var items = [[]]
-  var cur = 0
-  for i in (ARGV) {
-    call items[cur]->append(i)
-  }
-  return (items)
-}
-
-# FACTS
+# NEW FACT!
 proc - (...ARGV;;fd=ENV.FACTFD) {
-  var predicate = ARGV[0]
-  assert [len(ARGV) > 1]
-  debug-val "checking fact" (ARGV)
-  var args = split_pred(ARGV)
-  for arg in (args) {
-    if (facts=>indexOf(ARGV) === -1) {
-      debug-val "new fact" (ARGV)
-      call facts->append(ARGV)
+  debug-val "deduping fact" (ARGV)
+  if (FACTS=>indexOf(ARGV) === -1) {
+    debug-val "new fact" (ARGV)
+    call FACTS->append(ARGV)
+    # communicate if there are more processes
+    if (PROCS > 1) {
       debug-val "writing fact to" (fd)
       write $(json write (ARGV) | tr -d '\n') >> $fd
     }
+  } else {
+    setglobal duplicate_facts += 1
   }
 }
 
-proc WHEN (...condition;;;block) {
-    tail -f -n +0 $[ENV.FACTFD] | {
-      var facts = []
-      var lockfile = $(mktemp -u $[ENV.LOCKDIR]/rule.XXXXXXXXXX)
-      while (true) {
-        try { read --raw-line (&line) }
-        if (_error.code === 1) {
+# { pred: [[args/placeholders], block, NUM] }
+setglobal conditions = {}
+
+# add a new condition to our list of conditions
+proc WHEN (pred, ...condition;;;block) {
+  if (conditions=>get(pred) is null) {
+    setglobal conditions[pred] = []
+  }
+  var conditionSet = [[pred] ++ condition, block, block.sourceCode().location_start_line]
+  var duplicate = false
+  for i in (conditions[pred]) {
+    if (i[2] === conditionSet[2] and i[0] === conditionSet[0]) {
+      setvar duplicate = true
+      break
+    }
+  }
+  if (not duplicate) {
+    call conditions[pred]->append(conditionSet)
+    # TODO: if worker?
+    for i in (0 ..< cursor) {
+      var fact = FACTS[i]
+      debug-val "fact" (fact)
+      if (fact[0] === conditionSet[0][0]) {
+        evalCondition (conditionSet[0], conditionSet[1], fact)
+        debug-val "facts" (FACTS)
+      }
+    }
+  } else {
+    setglobal duplicate_when += 1
+  }
+}
+
+# read a fact from stdin
+# used to communicate between processes
+func readFact(input) {
+  try {
+    read --raw-line (&line) 
+    write $line | json read (&fact)
+  }
+  if (_error.code === 1) {
+    return (null)
+  }
+  # TODO: figure out if new fact or new condition
+  debug "got new fact"
+  debug-val fact (fact)
+  return (fact)
+}
+
+func setupReader() {
+  # read new facts
+  tail -f -n +0 $[ENV.FACTFD] >{newfacts} &
+  return ([$!, newfacts])
+}
+
+proc work() {
+    if (WORKER) {
+      var reader, newfacts = setupReader()
+      var FACTS = []
+    }
+
+    #var lockfile = $(mktemp -u $[ENV.LOCKDIR]/rule.XXXXXXXXXX)
+    while (true) {
+      if (WORKER) {
+        var fact = readFact(newfacts)
+        if (fact is null) {
           break
         }
-        touch $lockfile
-        debug "touched $lockfile"
-        write $line | json read (&fact)
-        debug "rule got new fact"
-        debug-val fact (fact)
-        call facts->append(fact)
-        # If predicate of first condition and fact are the same, do a loop
-        # with all the currently known facts
-        debug-val fact (fact)
-        debug-val "condition" (condition)
-        if (fact[0] === condition[0]) {
-          evalCondition (condition, block, facts, fact)
+        call FACTS->append(fact)
+      } else {
+        setglobal cursor += 1
+        if (cursor === len(FACTS)) {
+          break
         }
-        rm $lockfile
-        debug "removed $lockfile"
+        assert [cursor < len(FACTS)]
+        setvar fact = FACTS[cursor]
       }
+      debug new fact to process
+      debug-val fact (fact)
+      for condition in (conditions[fact[0]]) {
+        debug-val "working on condition" (condition)
+        evalCondition (condition[0], condition[1], fact)
+      }
+    }
+    debug finished work
   }
-  echo $! >> $[ENV.PSFD]
-}
 
-# cond -> Condition to be evaluated [[[COND1][COND2]], [[FACT1],[FACT2]]]
-# facts -> Existing facts [[FACT],[FACT],...]
-# pred -> List of already defined predicates to meet condition
-proc evalCondition(;condition, block, facts, fact) {
+# TODO: "Start workers..."
+# echo $! >> $[ENV.PSFD]
+
+# check if a fact matches a condition and execute the block if it does
+# fact -> the fact to be checked
+proc evalCondition(;condition, block, fact) {
+  setglobal evaluated_conditions += 1
   var placeholders = {}
   var param
-  debug-val "current facts" (facts)
+
   assert [len(condition) === len(fact)] # args need to match
-  # check conditions/fill in placeholders.
-  # TODO: pass down (by copy)
+  # check condition/fill in placeholders.
   for i, val in (fact) {
     setvar param = condition[i]
-    debug-val placeholders (placeholders)
-    debug-val val (val)
-    debug-val param (param)
     # replace/check placeholders
     if (param=>startsWith(/ [ 'A'-'Z' ] /)) {
       if (placeholders=>get(param) is not null) {
         if (val !== placeholders[param]) {
           debug doesnt match:
-          debug-val "condition" (conditions[num_pred])
           debug-val "val" (val)
           debug-val 'placeholders' (placeholders)
             return
@@ -118,74 +179,82 @@ proc evalCondition(;condition, block, facts, fact) {
 	  continue
 	}
       }
+      debug-val param (param)
+      debug param is null
       setvar placeholders[param] = val
+      debug-val placeholders (placeholders)
     } elif (param === val) {
+      debug param is correct
       continue
     } else {
       debug "$param !== $val, aborting"
       return
     }
   }
-  debug-val 'placeholders' (placeholders)
-  { call io->eval(block, vars=placeholders) } &
+  #debug-val 'placeholders' (placeholders)
+  setglobal nesting += 1
+  setglobal evaluated_blocks += 1
+  debug-val nesting (nesting)
+  call io->eval(block, vars=placeholders)
+  setglobal nesting -= 1
 }
 
 source $[ARGV[0]]
-debug-val 'all facts' (facts)
-#var children = []
+work
 
-debug-val "FACTFD" (ENV.FACTFD)
-var wait = false
-while (true) {
-  # TODO: while working children
-  fork { inotifywait -t 2 -qqre DELETE $[ENV.LOCKDIR] }
-  var p = $!
-  # if last file was deleted preliminary
-  if (len($(ls $[ENV.LOCKDIR])) === 0) {
-    debug "race?!"
-    kill $p
-  } else {
-    debug "no race. waiting"
-    setvar waiting = false
-    try { wait $p } 2>/dev/null
-  }
-  try { read -t 0 --raw-line (&line) }
-  if (_error.code === 1) {
-    if (len($(ls $[ENV.LOCKDIR])) > 0) {
-      debug "there are still locks, continue"
-      continue
-    } elif (wait) {
-      debug "couldn't read. finished?"
-      break
-    } else {
-      debug waiting
-      sleep 0.4 # give time for rules to start
-      setvar wait = true
-      find $temp
-      continue
-    }
-  }
-  debug "Generated fact: $line"
-  try { write $line | json read (&fact) }
-  if (_error.code === 1) {
-    debug "failure to read?! $line"
-    continue
-  }
-
-  - @fact (fd=ENV.FACTFD)
-} < $[ENV.NEWFD]
+# main process
+#var wait = false
+#while (true) {
+#  # TODO: while working children
+#  fork { inotifywait -t 2 -qqre DELETE $[ENV.LOCKDIR] }
+#  var p = $!
+#  # if last file was deleted preliminary
+#  if (len($(ls $[ENV.LOCKDIR])) === 0) {
+#    debug "race?!"
+#    kill $p
+#  } else {
+#    debug "no race. waiting"
+#    setvar waiting = false
+#    try { wait $p } 2>/dev/null
+#  }
+#  try { read -t 0 --raw-line (&line) }
+#  if (_error.code === 1) {
+#    if (len($(ls $[ENV.LOCKDIR])) > 0) {
+#      debug "there are still locks, continue"
+#      continue
+#    } elif (wait) {
+#      debug "couldn't read. finished?"
+#      break
+#    } else {
+#      debug waiting
+#      sleep 0.4 # give time for rules to start
+#      setvar wait = true
+#      find $temp
+#      continue
+#    }
+#  }
+#  debug "Generated fact: $line"
+#  try { write $line | json read (&fact) }
+#  if (_error.code === 1) {
+#    debug "failure to read?! $line"
+#    continue
+#  }
+#
+#  - @fact (fd=ENV.FACTFD)
+#} < $[ENV.NEWFD]
 # TODO: wait for all processes to finish with some kind of semaphore
 #for child in (children) {
 #  kill $child
 #}
-redir < $[ENV.PSFD] {
-  while read ps {
-  echo kill $ps
-    try { kill $ps }
-  }
-}
-= facts
-debug $(rm -rv $temp)
+#redir < $[ENV.PSFD] {
+#  while read ps {
+#  echo kill $ps
+#    try { kill $ps }
+#  }
+#}
+#debug $(rm -rv $temp)
+echo
+= FACTS
 
 # NEW IDEA
 #--------------------------------------------------
