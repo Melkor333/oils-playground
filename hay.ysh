@@ -68,6 +68,35 @@ proc define (...definitions; parent=root) {
   }
 }
 
+proc pp (;_node=root, _level=0) {
+# (HayNode
+#   children:{
+#     a
+#     (HayNode children:{})
+#     b                                                    (HayNode children:{})
+#     c
+#     (HayNode children:{})                              }
+# )
+  var i = ''
+  for _ in (0..<_level) {
+    setvar i = i ++ ' '
+  }
+  if (_node is not root) {
+    write "$i$[_node.name]"
+  }
+  write  --end '' "${i}(HayNode"
+  if (len(_node.definitions) > 0) {
+    write '' "  ${i}children: {"
+    for name, o in (_node.definitions) {
+      pp (o, _level+4)
+    }
+    write "$i  }"
+  } else {
+    write  --end '' "children: {}"
+  }
+  write ")"
+}
+
 setglobal evalLevel = 0
 proc eval (;out;;block=null) {
   if (evalLevel > 0 ) {
@@ -104,7 +133,7 @@ proc reset (;node=root) {
   }
 }
 
-var __provide__ = :| define eval reset |
+var __provide__ = :| define eval reset pp |
 
 if is-main {
   var code = $(cat $[ARGV[0]])

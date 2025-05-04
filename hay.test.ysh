@@ -78,12 +78,12 @@ testcase hay builtin usage (
     status=0
     read 0
     greater 0
-    """,
-    # not yet implemented
-    fails=true) {
+    """) {
 
-  hay define 2&>/dev/null
-  echo status=$?
+  try {
+    hay define 2>/dev/null
+  }
+  echo status=$_status
   
   hay define -- package user
   echo status=$?
