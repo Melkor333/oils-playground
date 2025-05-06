@@ -274,6 +274,7 @@ EOF
 testcase hay eval shell node, and JSON (
     # proc not yet implemented
     # TODO: TASK -> proc TASK
+    fails=true
     ) {
   shopt --set parse_brace parse_equals
   
