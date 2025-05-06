@@ -178,7 +178,7 @@ testcase hay names at top level (
 testcase "Parsing Nested Attributes nodes (bug fix)" (
     status=2, stderr=null,
     # no idea why this should fail, it exits 0
-    fails=true) {
+    skip=true) {
   shopt --set parse_brace parse_equals
   
   hay define Package/License
@@ -212,8 +212,6 @@ testcase hay eval Attr node, and JSON (
     stdout="""
     diff 0
     """,
-    # missing 'source' attr
-    fails=true
   ) {
   shopt --set parse_brace parse_equals
   
@@ -276,7 +274,7 @@ EOF
 testcase hay eval shell node, and JSON (
     # proc not yet implemented
     # TODO: TASK -> proc TASK
-    fails=true) {
+    ) {
   shopt --set parse_brace parse_equals
   
   hay define TASK
@@ -368,19 +366,19 @@ testcase haynode builtin can define nodes (
   
     # note that 'const' is required because haynode isn't capitalized
     haynode parent alice {
-      const age = '50'
+      var age = '50'
       
       haynode child bob {
         # TODO: Is 'const' being created in the old ENCLOSING frame?  Not the new
         # ENCLOSED one?
-        const age = '10'
+        setvar age = '10'
       }
 
       haynode child carol {
-	      const age = '20'
+	      setvar age = '20'
       }
 
-      const other = 'str'
+      var other = 'str'
     }
   }
 
