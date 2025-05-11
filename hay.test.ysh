@@ -1,3 +1,5 @@
+#!/usr/bin/env ysh
+
 setglobal oils_failures_allowed = 4
 use hay.ysh
 shopt -u strict_errexit
@@ -991,4 +993,20 @@ testcase Using Hay with --eval flags (
     --eval stage-2.ysh  # This one isn't pure
     -c ''
     ;
+}
+
+testcase "hay define with __invoke__" (
+    stdout="""
+    [
+      {type: 'Package', name: 'cpython'},
+      {type: 'Package', name: 'ruby'}
+    ]
+    """,
+    fails=true) {
+  var Package = invokableObject()
+  
+  Package cpython  # this appends tothe list
+  Package ruby  # append to the list
+  
+  = Package.instances  # INSTEAD of _hay()
 }
