@@ -3,10 +3,13 @@
 #source --builtin osh/two.sh
 use ./ctx.ysh
 
-proc _hayproc (...args;self;;block) {
+proc _hayproc (...args;self;;block=null) {
   # not self.parent! current target!
   if (self.parent is not haystack[-1]) {
     error "$[self.name] is not allowed inside node $[haystack[-1].name]"
+  }
+  if (block is null) {
+    error "$[self.name] requires a block argument" (code=2)
   }
   var out = block.sourceCode()
   setvar out.type = self.name
@@ -19,6 +22,9 @@ proc _haynode (...args;self;;block=null) {
   # not self.parent! current target!
   if (self.parent is not haystack[-1]) {
     error "$[self.name] is not allowed inside node $[haystack[-1].name]"
+  }
+  if (len(args) < 1) {
+    error "At least one argument required" (code=2)
   }
   call haystack->append(self)
   var out = {
@@ -36,7 +42,7 @@ proc _haynode (...args;self;;block=null) {
     }
     shopt -s errexit
     if (_error.code !== 0) {
-      return 127
+      return $[_error.code]
     }
     setvar out.attrs = attrs
     setvar out.children = c.children
@@ -47,7 +53,10 @@ proc _haynode (...args;self;;block=null) {
 
 proc node (node, ...name;;;block=null) {
   define $node (haystack[-1])
-  $node @name (;;block)
+  try {
+    $node @name (;;block)
+  }
+  return $[_error.code]
   #call io->eval(^($node @name (;;block);), vars=haystack[-1].definitions)
 }
 
@@ -126,21 +135,21 @@ proc eval (;out;;block=null) {
     echo "Can't nest hay eval!" >&2
     return 127
   }
-  setglobal evalLevel += 1
   if (block is null) {
     ctx get (out)
   } else {
-    var o = { source: null }
+    var o = { source: null, children: [] }
+    call out->setValue(o)
     var b = ^(call io->eval(block, vars=haystack[-1].definitions);)
+    setglobal evalLevel += 1
     try {
       ctx push (o;;b)
     }
+    setglobal evalLevel -= 1
     if (_error.code !== 0) {
       return $[_error.code]
     }
-    call out->setValue(o)
   }
-  setglobal evalLevel -= 1
 }
 
 proc reset (;node=root) {

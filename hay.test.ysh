@@ -6,6 +6,7 @@ shopt -u strict_errexit
 setglobal REPO_ROOT = $(pwd)
 
 # Hay: Hay Ain't YAML
+setglobal count = 0
 var failcount = 0
 var acceptedfails = 0 # count of failed but OK
 proc testcase (
@@ -13,6 +14,7 @@ proc testcase (
     status=0, skip=false, fails=false,
     stdout='', stderr='';
     block) {
+    setglobal count += 1
   var name = n=>join(" ")
   if (status is not null) {
     call asserts->insert(0, ^[status === out.status])
@@ -59,16 +61,13 @@ proc testcase (
     setglobal failcount += 1
     if (fails) {
       setglobal acceptedfails += 1
+    } else {
+      = out
     }
   }
 
   if (not failed) {
     write 'Success'
-  } else {
-    if (not fails) {
-      = out
-      exit 1
-    }
   }
 }
 
@@ -322,14 +321,14 @@ testcase hay eval shell node, and JSON (
       "type": "TASK",
       "args": [],
       "location_str": "./hay.test.ysh",
-      "location_start_line": 306,
+      "location_start_line": 305,
       "code_str": "           echo hi "
     },
     {
       "type": "TASK",
       "args": [],
       "location_str": "./hay.test.ysh",
-      "location_start_line": 308,
+      "location_start_line": 307,
       "code_str": "          \n      echo one\n      echo two\n    "
     }
   ]
@@ -424,27 +423,24 @@ testcase "haynode: usage errors (name or block required)" (
     LEN 0
     define code 2
     LEN 0
-    """,
-    # haynode missing
-    fails=true) {
+    """) {
   shopt --set parse_brace parse_equals parse_proc
   
   # should we make it name or block required?
   # license { ... } might be useful?
   
   try {
-  hay eval (&result) {
-      haynode package
+    hay eval (&result) {
+      hay node package
     }
   }
   echo "haynode attr $_status"
-  var result = _hay()
   echo "LEN $[len(result['children'])]"
   
   # requires block arg
   try {
-  hay eval (&result) {
-      haynode TASK build
+    hay eval (&result) {
+      hay node TASK build
     }
   }
   echo "haynode code $_status"
@@ -454,7 +450,7 @@ testcase "haynode: usage errors (name or block required)" (
   hay define package TASK
   
   try {
-  hay eval (&result) {
+    hay eval (&result) {
       package
     }
   }
@@ -462,7 +458,7 @@ testcase "haynode: usage errors (name or block required)" (
   echo "LEN $[len(result['children'])]"
   
   try {
-  hay eval (&result) {
+    hay eval (&result) {
       TASK build
     }
   }
@@ -1027,3 +1023,5 @@ testcase "hay define with __invoke__" (
   
   = Package.instances  # INSTEAD of _hay()
 }
+
+write "Tests: $count" "Failures: $failcount" "Expected failures: $acceptedfails" "Successful: $[count - failcount]"
