@@ -7,9 +7,11 @@ proc push (; context;; block) {
   }
 
   call contextStack->append(context)
-  call io->eval(block, in_captured_frame=true)
+  try {
+    call io->eval(block, in_captured_frame=true)
+  }
   call contextStack->pop()
-  #return $[_error.code]
+  return $[_error.code]
 }
 
 proc set (;; ...named) {

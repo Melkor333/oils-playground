@@ -5,8 +5,8 @@ use ./ctx.ysh
 
 proc _hayproc (...args;self;;block) {
   # not self.parent! current target!
-  if (self.parent !== haystack[-1]) {
-    error "$[self.name] is not allowed inside node with id $[haystack[-1]]"
+  if (self.parent is not haystack[-1]) {
+    error "$[self.name] is not allowed inside node $[haystack[-1].name]"
   }
   var out = block.sourceCode()
   setvar out.type = self.name
@@ -17,10 +17,10 @@ proc _hayproc (...args;self;;block) {
 
 proc _haynode (...args;self;;block=null) {
   # not self.parent! current target!
-  if (self.parent !== haystack[-1]) {
-    error "$[self.name] is not allowed inside node with id $[haystack[-1]]"
+  if (self.parent is not haystack[-1]) {
+    error "$[self.name] is not allowed inside node $[haystack[-1].name]"
   }
-  call haystack->append(vm.id(self))
+  call haystack->append(self)
   var out = {
     type: self.name,
     args: args
@@ -45,11 +45,17 @@ proc _haynode (...args;self;;block=null) {
   call haystack->pop()
 }
 
+proc node (node, ...name;;;block=null) {
+  define $node (haystack[-1])
+  $node @name (;;block)
+  #call io->eval(^($node @name (;;block);), vars=haystack[-1].definitions)
+}
+
 var _hayNodeProto = Object(null, {__invoke__:_haynode})
 var _hayProcProto = Object(null, {__invoke__:_hayproc})
 var root = Object(_hayNodeProto, {name: 'root', definitions: {}, parent:null})
 
-setglobal haystack = [vm.id(root)]
+setglobal haystack = [root]
 
 proc define (...definitions; parent=root) {
   if (len(definitions) < 1) {
@@ -64,11 +70,11 @@ proc define (...definitions; parent=root) {
     var names = definition=>split('/', count=1)
     if (names[0] not in parent.definitions) {
       if (definition=>upper() === definition) {
-        setvar parent.definitions[names[0]] = Object(_hayProcProto, {name:names[0], definitions: {}, parent: vm.id(parent)})
+        setvar parent.definitions[names[0]] = Object(_hayProcProto, {name:names[0], definitions: {}, parent: parent})
       } else {
-        setvar parent.definitions[names[0]] = Object(_hayNodeProto, {name:names[0], definitions: {}, parent: vm.id(parent)})
+        setvar parent.definitions[names[0]] = Object(_hayNodeProto, {name:names[0], definitions: {}, parent: parent})
       }
-      if (parent is root) {
+      if (parent is haystack[-1]) {
         # put it in current namespace if we're in root
         call setVar(names[0], parent.definitions[names[0]], global=true)
 	# doesnt work because names and parent are missing in the frame...
@@ -85,7 +91,7 @@ proc define (...definitions; parent=root) {
   }
 }
 
-proc pp (;_node=root, _level=0) {
+proc pp (;_node=haystack[-1], _level=0) {
 # (HayNode
 #   children:{
 #     a
@@ -125,14 +131,13 @@ proc eval (;out;;block=null) {
     ctx get (out)
   } else {
     var o = { source: null }
-    var b = ^(call io->eval(block, vars=root.definitions);)
+    var b = ^(call io->eval(block, vars=haystack[-1].definitions);)
     try {
       ctx push (o;;b)
     }
     if (_error.code !== 0) {
-      return 127
+      return $[_error.code]
     }
-
     call out->setValue(o)
   }
   setglobal evalLevel -= 1
@@ -150,7 +155,7 @@ proc reset (;node=root) {
   }
 }
 
-var __provide__ = :| define eval reset pp |
+var __provide__ = :| define eval reset pp node |
 
 if is-main {
   var code = $(cat $[ARGV[0]])

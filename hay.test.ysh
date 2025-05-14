@@ -72,6 +72,27 @@ proc testcase (
   }
 }
 
+func sanitizeFd(fd) {
+  if (fd === '-') {
+    return ('/dev/stdin')
+  } else { return (fd) }
+}
+# read json into dic, compare, print json diff if they're actually different
+proc json-diff (one, two) {
+  read --all (&a) < $[sanitizeFd(one)]
+  read --all (&b) < $[sanitizeFd(two)]
+  try {
+    assert [fromJson(a) === fromJson(b)]
+    return
+  }
+  echo $one >&2
+  echo $two >&2
+  try {
+    diff <(write $one | sort) <(write $two | sort)
+    diff <(write $one) <(write $two)
+  }
+  return $?
+}
 # --------------------------------------
 
 testcase hay builtin usage (
@@ -159,7 +180,7 @@ testcase hay names at top level (
   Package one
   echo status=$?
   
-  setvar args = _hay()['children'][0]['args']
+  var args = _hay()['children'][0]['args']
   write --sep ' ' $[len(_hay()['children'])] @args
   
   hay eval (&result) {
@@ -200,7 +221,7 @@ testcase "Parsing Nested Attributes nodes (bug fix)" (
   #json write (_hay()) | jq '.children[0].children[0].attrs' > actual.txt
   json write (out) | jq '.children[0].children[0].attrs' > actual.txt
   
-  diff -u - actual.txt <<EOF
+  json-diff - actual.txt <<EOF
 {
   "path": "LICENSE.txt"
 }
@@ -238,7 +259,7 @@ testcase hay eval Attr node, and JSON (
   # Note: using jq to normalize
   json write (result) | jq . > out.txt
   
-  diff -u - out.txt <<EOF
+  json-diff - out.txt <<EOF
 {
   "source": null,
   "children": [
@@ -276,7 +297,6 @@ EOF
 testcase hay eval shell node, and JSON (
     # proc not yet implemented
     # TODO: TASK -> proc TASK
-    fails=true
     ) {
   shopt --set parse_brace parse_equals
   
@@ -294,23 +314,23 @@ testcase hay eval shell node, and JSON (
   #= result
   json write (result) | jq . > out.txt
   
-  diff -u - out.txt <<'EOF'
+  json-diff - out.txt <<'EOF'
 {
   "source": null,
   "children": [
     {
       "type": "TASK",
       "args": [],
-      "location_str": "[ stdin ]",
-      "location_start_line": 6,
-      "code_str": "         echo hi "
+      "location_str": "./hay.test.ysh",
+      "location_start_line": 306,
+      "code_str": "           echo hi "
     },
     {
       "type": "TASK",
       "args": [],
-      "location_str": "[ stdin ]",
-      "location_start_line": 8,
-      "code_str": "        \n    echo one\n    echo two\n  "
+      "location_str": "./hay.test.ysh",
+      "location_start_line": 308,
+      "code_str": "          \n      echo one\n      echo two\n    "
     }
   ]
 }
@@ -357,9 +377,7 @@ testcase haynode builtin can define nodes (
     2
     level 0 children
     2
-    """,
-    # haynode not yet implemented!
-    fails=true) {
+    """) {
   shopt --set parse_paren parse_brace parse_equals parse_proc
   
   # It prints JSON by default?  What about the code blocks?
@@ -368,33 +386,32 @@ testcase haynode builtin can define nodes (
   hay eval (&result) {
   
     # note that 'const' is required because haynode isn't capitalized
-    haynode parent alice {
+    hay node parent alice {
       var age = '50'
       
-      haynode child bob {
+      hay node child bob {
         # TODO: Is 'const' being created in the old ENCLOSING frame?  Not the new
         # ENCLOSED one?
-        setvar age = '10'
+        var age = '10'
       }
 
-      haynode child carol {
-	      setvar age = '20'
+      hay node child carol {
+	var age = '20'
       }
 
       var other = 'str'
     }
   }
 
-#= result
   write -- 'level 0 children' $[len(result['children'])]
-	  write -- 'level 1 children' $[len(result['children'][0]['children'])]
+  write -- 'level 1 children' $[len(result['children'][0]['children'])]
 
-	  hay eval (&result) {
-		  haynode parent foo
-			  haynode parent bar
-	  }
+  hay eval (&result) {
+    hay node parent foo
+    hay node parent bar
+  }
   write -- 'level 0 children' $[len(result['children'])]
-    }
+}
 
 testcase "haynode: usage errors (name or block required)" (
     stdout="""
