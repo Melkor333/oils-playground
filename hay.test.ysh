@@ -8,13 +8,14 @@ setglobal REPO_ROOT = $(pwd)
 # Hay: Hay Ain't YAML
 setglobal count = 0
 var failcount = 0
+var skipcount = 0
 var acceptedfails = 0 # count of failed but OK
 proc testcase (
     ...n; ...asserts;
     status=0, skip=false, fails=false,
     stdout='', stderr='';
     block) {
-    setglobal count += 1
+  setglobal count += 1
   var name = n=>join(" ")
   if (status is not null) {
     call asserts->insert(0, ^[status === out.status])
@@ -29,6 +30,7 @@ proc testcase (
   write --end '' "$name - "
   if (skip) {
     echo "Skipped"
+    setglobal skipcount += 1
     return
   }
   # TODO: maybe something like ysh <<<$block=>getCommand()
@@ -169,7 +171,7 @@ testcase hay names at top level (
     status=0
     1 three
     """,
-    # probably not implement
+    # probably not implementable
     skip=true) {
   shopt --set parse_brace parse_at
   shopt --unset errexit
@@ -321,14 +323,14 @@ testcase hay eval shell node, and JSON (
       "type": "TASK",
       "args": [],
       "location_str": "./hay.test.ysh",
-      "location_start_line": 305,
+      "location_start_line": 307,
       "code_str": "           echo hi "
     },
     {
       "type": "TASK",
       "args": [],
       "location_str": "./hay.test.ysh",
-      "location_start_line": 307,
+      "location_start_line": 309,
       "code_str": "          \n      echo one\n      echo two\n    "
     }
   ]
@@ -344,7 +346,7 @@ testcase "_hay() register" (
     """,
     # _hay() missing
     # TODO: toplevel impossible
-    fails=true) {
+    skip=true) {
   shopt --set parse_paren parse_brace parse_equals parse_proc
   
   hay define user
@@ -1023,4 +1025,4 @@ testcase "hay define with __invoke__" (
   = Package.instances  # INSTEAD of _hay()
 }
 
-write "Tests: $count" "Failures: $failcount" "Expected failures: $acceptedfails" "Successful: $[count - failcount]" | column -ts :
+write "Tests: $count" "Skipped: $skipcount" "Expected failures: $acceptedfails" "Failures: $failcount" "Successful: $[count - failcount - skipcount]" | column -ts :
