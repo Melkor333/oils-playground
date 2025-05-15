@@ -23,7 +23,7 @@ proc _haynode (...args;self;;block=null) {
   if (self.parent is not haystack[-1]) {
     error "$[self.name] is not allowed inside node $[haystack[-1].name]"
   }
-  if (len(args) < 1) {
+  if (len(args) < 1 and block is null) {
     error "At least one argument required" (code=2)
   }
   call haystack->append(self)
@@ -34,13 +34,11 @@ proc _haynode (...args;self;;block=null) {
   if (block is not null) {
     var c = {children: []}
     var attrs
-    shopt -u errexit
     try {
       ctx push (c) {
           setvar attrs = io->evalToDict(block, vars=self.definitions)
       }
     }
-    shopt -s errexit
     if (_error.code !== 0) {
       return $[_error.code]
     }

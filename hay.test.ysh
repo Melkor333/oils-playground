@@ -470,10 +470,7 @@ testcase "haynode: shell nodes require block args; attribute nodes don't" (
     stdout="""
     status 0
     status 2
-    """,
-    # todo: should be proc task
-    # not yet implemented
-    fails=true) {
+    """) {
   shopt --set parse_brace parse_equals parse_proc
   
   hay define package TASK
@@ -490,7 +487,7 @@ testcase "haynode: shell nodes require block args; attribute nodes don't" (
     hay eval (&result) {
       TASK build
     }
-  } 2&>/dev/null
+  }
   echo "status $_status"
 }
 
@@ -576,44 +573,46 @@ testcase Scope of Variables Inside Hay Blocks (
 
 testcase Nested bare assignment (
     stdout="""
-    {
-      "source": null,
-      "children": [
-        {
-          "type": "Package",
-          "args": [],
-          "children": [
-            {
-              "type": "Deps",
-              "args": [],
-              "children": [],
-              "attrs": {
-                "x": 20
-              }
-            }
-          ],
-          "attrs": {
-            "x": 10
-          }
-        }
-      ]
-    }
-    """,
-    # missing source
-    fails=true) {
+    """) {
   shopt --set ysh:all
   
   hay define Package/Deps
   
-  Package {
-    x = 10
-    Deps {
-      # this is a const
-      x = 20
+  hay eval (&out) {
+    Package {
+      x = 10
+      Deps {
+        # this is a const
+        x = 20
+      }
     }
   }
   
-  json write (_hay())
+  json-diff - <(json write (out)) <<EOF
+{
+  "source": null,
+  "children": [
+    {
+      "type": "Package",
+      "args": [],
+      "children": [
+        {
+          "type": "Deps",
+          "args": [],
+          "children": [],
+          "attrs": {
+            "x": 20
+          }
+        }
+      ],
+      "attrs": {
+        "x": 10
+      }
+    }
+  ]
+}
+EOF
+
 }
 
 testcase Param with same name as Hay attribute (
@@ -1024,4 +1023,4 @@ testcase "hay define with __invoke__" (
   = Package.instances  # INSTEAD of _hay()
 }
 
-write "Tests: $count" "Failures: $failcount" "Expected failures: $acceptedfails" "Successful: $[count - failcount]"
+write "Tests: $count" "Failures: $failcount" "Expected failures: $acceptedfails" "Successful: $[count - failcount]" | column -ts :
