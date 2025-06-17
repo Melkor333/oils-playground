@@ -1,11 +1,18 @@
 #!/usr/bin/env ysh
 # https://dusa.rocks/docs/introductions/asp/
 
-var DEBUGLVL = 5
-var DEBUG_VARS = :||
-setglobal nesting = 0
 setglobal WORKER = false
 setglobal MAX_PROC = 10
+# How to hash the code for comparison.
+# md5 -> run `ysh -n` on the string and hash that
+# string -> just compare the raw src code
+# md5 takes about double the time for `edge` with a single worker/server infra
+# TODO: bench if duplicate WHEN become a problem!
+setglobal hash_format = "string"
+var DEBUGLVL = 0
+var DEBUG_VARS = :|solution|
+
+setglobal nesting = 0
 #var temp = $(mktemp -d)
 #setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
 setglobal ENV.FACTFD = null
@@ -13,37 +20,47 @@ setglobal ENV.FACTFD = null
 #setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
 #setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
 
-
 setglobal evaluated_conditions = 0
 setglobal evaluated_blocks = 0
 setglobal duplicate_when = 0
 setglobal duplicate_facts = 0
 
-# DO NOT USE.
-# CAUSES SEGFAULTS! ?!
-source tui.ysh
+setglobal YSH = $(which ysh)
+
+use tui.ysh
+
+proc md5(;;;b) {
+  var sum = $(echo $[b.sourceCode().code_str] | $YSH -n | md5sum)=>split(" ")[0]
+  echo $sum
+}
+
 proc stats {
-  ... log-with-footer
+  var c = 0
+  for _, v in (conditions) {
+    setvar c += len(v)
+  }
+  ... tui log-with-footer
     "$[ARGV=>join(' ')]"
-    "Conditions: $[len(conditions)] facts: $[len(FACTS)]"
+    "Conditions: $c facts: $[len(FACTS)]"
     "Evaluated conditions: $evaluated_conditions Evaluated blocks: $evaluated_blocks"
-    #abc
     "duplicate WHEN: $duplicate_when duplicate facts: $duplicate_facts"
     ;
 }
 
 proc debug {
-if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
-  stats "${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]} - $[ARGV=>join(' ')]"
+var lvl = int(${#FUNCNAME[@]}) - 2
+if (lvl > DEBUGLVL) { return }
+  stats "$$lvl DEBUG ${FUNCNAME[@]} - $[ARGV=>join(' ')]"
 }
 
 proc debug-val (name;val) {
   if (DEBUG_VARS=>indexOf(name) === -1) {
     return
   }
-  if (int(${#FUNCNAME[@]}) > DEBUGLVL) { return }
+  var lvl = int(${#FUNCNAME[@]}) - 2
+  if (lvl > DEBUGLVL) { return }
   #echo ${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val)) >&2
-  stats "${#FUNCNAME[@]} DEBUG ${FUNCNAME[@]}: $name - $(pp value (val))"
+  stats "$lvl DEBUG ${FUNCNAME[@]}: $name - $(pp value (val))"
 }
 
 # a list of facts, against which the current needs to be checked
@@ -67,7 +84,7 @@ proc - (...ARGV;;fd=ENV.FACTFD) {
   }
 }
 
-# { pred: [[args/placeholders], block, NUM] }
+# { pred: [[args/placeholders], block, hash] }
 setglobal conditions = {}
 
 # add a new condition to our list of conditions
@@ -75,8 +92,18 @@ proc WHEN (pred, ...condition;;;block) {
   if (conditions=>get(pred) is null) {
     setglobal conditions[pred] = []
   }
-  var conditionSet = [[pred] ++ condition, block, block.sourceCode().location_start_line]
+  var sum
+  case (hash_format) {
+    md5 {
+      setvar sum = $(md5 (;;block))
+    }
+    string {
+      setvar sum = block.sourceCode().code_str
+    }
+  }
+  var conditionSet = [[pred] ++ condition, block, sum]
   var duplicate = false
+  # TODO: compare sourcecode. Hash of src?
   for i in (conditions[pred]) {
     if (i[2] === conditionSet[2] and i[0] === conditionSet[0]) {
       setvar duplicate = true
@@ -254,40 +281,42 @@ work
 #}
 #debug $(rm -rv $temp)
 echo
-= FACTS
+debug-val solution (FACTS)
+write
 
 # NEW IDEA
 #--------------------------------------------------
 # External Objects
-# factsfd -> file with all facts (for multiple workers)
-# newfd -> file (could be a fifo) where workers pass new filedesceiptors
-# condfd -> where new conditions are spawned
-# lockdir -> workers create a lockfile when processing facts/conditions
+# global factsfd -> file with all facts (for multiple workers)
+# condfd (FIFO) -> anonymous pipe where idle workers grab new conditions
+# statusfd (worker stdout) -> anonymous pipe where the worker sends new conditions and his cursor when waiting for new facts/conditions (or just it's PID)
 #--------------------------------------------------
 # Internal Objects
 # Condition -> dict, unique
-#   facts -> id of factlist
 #   condition -> what needs to be true
 #   statement -> what to execute when condition is met
+#   (facts -> id of factlist)
 #
-# facts -> list, one per process (main + worker)
+# facts -> list of lists, one per process (main + worker)
 #   0 = facts.
 #   1+ = possibilities. might be nulled atany point in time.
 #
-# conditionlist -> array, main worker
-#   list of confition.condition to not allow the same condition twice
-#
+# conditionlist -> list/dict
+#   main: list of condition.condition to not allow the same condition twice
+#   worker: dict of conditions (per pred) to check each fact against
 
 # ==================================================
 #
 # main proc
 # -> gather and dedupe new facts (optionally separate)
-# -> gather new conditions (optionally separate)
+# -> gather (and dedupe) new conditions (optionally separate)
 #    -> feed them to worker
-# -> if no lockfile: stop workers, cleanup
+#    -> if all workers report back idle. Finished!
+#    -> Manual decisions? (custom proc 'interactive' { ... }' to instruct the worker to pass it back to the main
 #
 #--------------------------------------------------
 # worker process
 # -> check for new conditionals
 #    until cond->index == worker->index: process facts
 # -> for new fact, for condition: process fact
+# -> on 'interactive' -> send block to Main
