@@ -1,0 +1,17 @@
+#!/usr/bin/env ysh
+
+setglobal a = []
+proc take-block (;;;block) {
+  call a->append(block)
+}
+
+proc exec-block (;;...v;b) {
+    call io->eval(b, vars=v)
+}
+
+exec-block (x=15) {
+  call a->append( ^(echo $x))
+}
+#take-block (;;b)
+exec-block (;;a[0])
+

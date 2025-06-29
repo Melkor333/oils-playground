@@ -1,33 +1,75 @@
 #!/usr/bin/env ysh
 # https://dusa.rocks/docs/introductions/asp/
 
-setglobal WORKER = false
-setglobal MAX_PROC = 10
+# Configs
+# -------------------------
+# -1 = infinite, 1 = no server/
+setglobal MAX_PROC = 1
 # How to hash the code for comparison.
 # md5 -> run `ysh -n` on the string and hash that
 # string -> just compare the raw src code
 # md5 takes about double the time for `edge` with a single worker/server infra
 # TODO: bench if duplicate WHEN become a problem!
-setglobal hash_format = "string"
+setglobal hash_format = "md5"
 var DEBUGLVL = 0
 var DEBUG_VARS = :|solution|
 
-setglobal nesting = 0
-#var temp = $(mktemp -d)
-#setglobal ENV.FACTFD = $(mktemp $temp/facts.XXX)
-setglobal ENV.FACTFD = null
-#setglobal ENV.NEWFD = $(mktemp $temp/newfacts.XXX)
-#setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
-#setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
+# Setup per processes
+# -------------------------
+# TODO: -1 should spawn a process per condition
+if (MAX_PROC > 1 or MAX_PROC === -1) {
+  var temp = $(mktemp -d)
+  # Main writes facts, all workers read
+  setglobal ENV.FACTFD = "$temp/facts"
+  touch $[ENV.FACTFD]
 
+  # Workers send facts/conditions to server
+  # dict -> condition
+  # list -> fact
+  setglobal ENV.CALLBACKFD = "$temp/control"
+  mkfifo $[ENV.CALLBACKFD]
+
+  # Server sends conditions, an idle worker picks it up
+  if (MAX_PROC > 1) {
+    setglobal ENV.WORKFD = "$temp/work"
+    mkfifo $[ENV.WORKFD]
+  }
+
+  # TODO: Separate process should do the logging and stats?
+  # TODO: logfile per Worker?
+  #setglobal ENV.LOGFD = "$temp/mainlog"
+  #mkfifo $[ENV.LOGFD]
+
+  #setglobal ENV.LOCKDIR = $(mktemp -d $temp/lockdir.XXX)
+  #setglobal ENV.PSFD = $(mktemp $temp/ps.XXX)
+} else {
+  # must be set as it's a default argument
+  setglobal ENV.FACTFD = null
+}
+
+# globals for stats
+# -------------------------
+# todo: make a module?
 setglobal evaluated_conditions = 0
 setglobal evaluated_blocks = 0
 setglobal duplicate_when = 0
 setglobal duplicate_facts = 0
 
 setglobal YSH = $(which ysh)
+setglobal nesting = 0
+setglobal WORKER = false
+# a list of facts, against which the current needs to be checked
+setglobal FACTS = []
+setglobal cursor = 0
+setglobal PROCS = 1
 
 use tui.ysh
+
+# Helpers
+# -------------------------
+proc Block ( ; out; ; block) {
+  call out->setValue(block)
+}
 
 proc md5(;;;b) {
   var sum = $(echo $[b.sourceCode().code_str] | $YSH -n | md5sum)=>split(" ")[0]
@@ -63,21 +105,21 @@ proc debug-val (name;val) {
   stats "$lvl DEBUG ${FUNCNAME[@]}: $name - $(pp value (val))"
 }
 
-# a list of facts, against which the current needs to be checked
-setglobal FACTS = []
-setglobal cursor = 0
-setglobal PROCS = 1
 
 # NEW FACT!
-proc - (...ARGV;;fd=ENV.FACTFD) {
+proc - (...ARGV) {
+  if (WORKER) {
+    json write (ARGV) | tr -d '\n' >> $[ENV.CALLBACKD] &
+    return
+  }
   debug-val "deduping fact" (ARGV)
   if (FACTS=>indexOf(ARGV) === -1) {
     debug-val "new fact" (ARGV)
     call FACTS->append(ARGV)
     # communicate if there are more processes
-    if (PROCS > 1) {
+    if (MAX_PROC > 1) {
       debug-val "writing fact to" (fd)
-      write $(json write (ARGV) | tr -d '\n') >> $fd
+      json write (ARGV) | tr -d '\n' >> $[ENV.FACTFD]
     }
   } else {
     setglobal duplicate_facts += 1
@@ -87,8 +129,27 @@ proc - (...ARGV;;fd=ENV.FACTFD) {
 # { pred: [[args/placeholders], block, hash] }
 setglobal conditions = {}
 
+proc catchup_condition(;conditionSet) {
+  for i in (0 ..< cursor) {
+    var fact = FACTS[i]
+    debug-val "fact" (fact)
+    if (fact[0] === conditionSet[0][0]) {
+      evalCondition (conditionSet[0], conditionSet[1], fact)
+      debug-val "facts" (FACTS)
+    }
+  }
+}
+
 # add a new condition to our list of conditions
 proc WHEN (pred, ...condition;;;block) {
+  if (WORKER) {
+    ... json write ({
+          pred,
+          condition,
+          block: block.sourceCode().code_str
+	    }) | tr -d '\n' >> $[ENV.CALLBACKFD] &
+	  return
+  }
   if (conditions=>get(pred) is null) {
     setglobal conditions[pred] = []
   }
@@ -103,67 +164,81 @@ proc WHEN (pred, ...condition;;;block) {
   }
   var conditionSet = [[pred] ++ condition, block, sum]
   var duplicate = false
-  # TODO: compare sourcecode. Hash of src?
   for i in (conditions[pred]) {
     if (i[2] === conditionSet[2] and i[0] === conditionSet[0]) {
       setvar duplicate = true
       break
     }
   }
-  if (not duplicate) {
-    call conditions[pred]->append(conditionSet)
-    # TODO: if worker?
-    for i in (0 ..< cursor) {
-      var fact = FACTS[i]
-      debug-val "fact" (fact)
-      if (fact[0] === conditionSet[0][0]) {
-        evalCondition (conditionSet[0], conditionSet[1], fact)
-        debug-val "facts" (FACTS)
-      }
-    }
-  } else {
+  if (duplicate) {
     setglobal duplicate_when += 1
+    return
+  }
+  call conditions[pred]->append(conditionSet)
+
+  if (MAX_PROC > 1) {
+    # pass work to existing worker
+    json write (conditionSet) >> $[ENV.WORKFD]
+  } elif (MAX_PROC === 1) {
+    # catchup
+    catchup_condition (conditionSet)
+  } else {
+    # start new worker per condition
+    assert [MAX_PROC === -1]
+    TODO: start new worker bee!
+    fork {
+      # we only care about this condition!
+      setglobal conditions = { pred: [conditionSet] }
+      setglobal WORKER = true
+      catchup_condition (conditionSet)
+      work
+    }
   }
 }
 
 # read a fact from stdin
 # used to communicate between processes
-func readFact(input) {
+func readJson(input) {
   try {
     read --raw-line (&line) 
-    write $line | json read (&fact)
+    write $line | json read (&m)
   }
   if (_error.code === 1) {
     return (null)
   }
   # TODO: figure out if new fact or new condition
-  debug "got new fact"
-  debug-val fact (fact)
-  return (fact)
+  debug "got new json message"
+  debug-val fact (m)
+  return (m)
 }
 
-func setupReader() {
-  # read new facts
-  tail -f -n +0 $[ENV.FACTFD] >{newfacts} &
-  return ([$!, newfacts])
+func setupReader(fd) {
+  if test -p $fd {
+    return ([null, fd])
+  }
+  # read the whole file and follow
+  tail -f -n +0 $fd >{reader} &
+  return ([$!, reader])
 }
 
 proc work() {
     if (WORKER) {
-      var reader, newfacts = setupReader()
+      # TODO: kill reader at the end?
+      var _, newfacts = setupReader(ENV.FACTFD)
       var FACTS = []
     }
 
     #var lockfile = $(mktemp -u $[ENV.LOCKDIR]/rule.XXXXXXXXXX)
     while (true) {
       if (WORKER) {
-        var fact = readFact(newfacts)
+        # TODO: if MAX_PROC > 1 -> check for conditions
+        var fact = readJson(newfacts)
         if (fact is null) {
           break
         }
+	# TODO: optimize if MAX_PROC = -1, only care about matching facts!
         call FACTS->append(fact)
       } else {
-        setglobal cursor += 1
         if (cursor === len(FACTS)) {
           break
         }
@@ -172,10 +247,11 @@ proc work() {
       }
       debug new fact to process
       debug-val fact (fact)
-      for condition in (conditions[fact[0]]) {
+      for condition in (conditions=>get(fact[0], [])) {
         debug-val "working on condition" (condition)
         evalCondition (condition[0], condition[1], fact)
       }
+      setglobal cursor += 1
     }
     debug finished work
   }
@@ -191,6 +267,7 @@ proc evalCondition(;condition, block, fact) {
   var param
 
   assert [len(condition) === len(fact)] # args need to match
+
   # check condition/fill in placeholders.
   for i, val in (fact) {
     setvar param = condition[i]
@@ -227,7 +304,9 @@ proc evalCondition(;condition, block, fact) {
 }
 
 source $[ARGV[0]]
-work
+if (MAX_PROC > 0) {
+  work
+}
 
 # main process
 #var wait = false
