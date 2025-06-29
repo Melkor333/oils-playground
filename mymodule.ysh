@@ -1,0 +1,18 @@
+proc invoked (;self) {
+  echo invoked $[self.name]
+}
+var _proto = Object(null, {__invoke__:invoked})
+var obj = Object(_proto, {name: 'Thing'})
+
+proc nest (;;;b) {
+  call io->eval(^(
+    call setVar('Thing', obj, global=true)
+    Thing
+    call io->eval(b)
+  ))
+}
+var __provide__ = :|nest|
+
+var b = ^(Thing;)
+nest (;;b)
+
