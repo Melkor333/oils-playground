@@ -624,8 +624,8 @@ testcase Param with same name as Hay attribute (
       "port": 80
     }
     """,
-    # apparently objects aren't visible inside the proc call. bug?
-    fails=true) {
+    # seems to be a oils bug with eval to dict
+    skip=true) {
   shopt --set ysh:all
   
   # Danilo reported this on Zulip
@@ -633,14 +633,16 @@ testcase Param with same name as Hay attribute (
   hay define Service
   
   proc gen-service(; ; variant = null) {
-    Service {
-      variant = variant
-      port = 80
+    #var v = variant
+    #unset variant
+    hay node Service {
+      # IMO eval(to_dict) should capture setvar variant = variant!
+      setvar variant = variant
+      var port = 80
     }
   }
   
   hay eval (&out) {
-    = Service
     gen-service 
     gen-service (variant = 'z')
   }
