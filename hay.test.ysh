@@ -662,13 +662,12 @@ testcase hay define and then an error (
     license 0
     """,
     stderr=null,
-    # hay pp not implemented
-    fails=true) {
+    ) {
   shopt --set parse_brace parse_equals parse_proc
   
   hay define Package/License User TASK
   
-  hay pp defs > /dev/null
+  hay pp > /dev/null
   
   hay eval (&result) {
     User bob
@@ -701,16 +700,16 @@ testcase hay define and then an error (
   echo 'ditto'
 }
 
-testcase "parseHay()" (
+testcase "hay.parse()" (
     stdout="""
     OK
     """,
     # not implemented?
-    fails=true) {
+    ) {
   shopt --set parse_proc
   
-  const config_path = "$REPO_ROOT/spec/testdata/config/ci.oil"
-  const block = parseHay(config_path)
+  const config_path = "$REPO_ROOT/hay/ci.oil"
+  const block = hay.parse(config_path)
   
   # Are blocks opaque?
   {
@@ -723,7 +722,7 @@ testcase "parseHay()" (
   fi
 }
 
-testcase "Code Blocks: parseHay() then shvar _DIALECT= { evalHay() }" (
+testcase "Code Blocks: hay.parse() then shvar _DIALECT= { hay.evalBlock() }" (
     stdout="""
     level 0 children
     2
@@ -737,16 +736,18 @@ testcase "Code Blocks: parseHay() then shvar _DIALECT= { evalHay() }" (
     publish-html
     ---
     """,
-    fails=true) {
+    ) {
   shopt --set parse_brace parse_proc
   
   hay define TASK
   
-  const config_path = "$REPO_ROOT/spec/testdata/config/ci.oil"
-  const block = parseHay(config_path)
+  const config_path = "$REPO_ROOT/hay/ci.oil"
+  const block = hay.parse(config_path)
   
   shvar _DIALECT=sourcehut {
-    const d = evalHay(block)
+    hay eval (&d;;block)
+    # TODO: disallow?
+    #const d = hay.evalBlock(block)
   }
   
   const children = d['children']
@@ -757,7 +758,7 @@ testcase "Code Blocks: parseHay() then shvar _DIALECT= { evalHay() }" (
   write 'child 1' $[children[1].type] $[join(children[1].args)] ---
 }
 
-testcase "evalHay() usage" (
+testcase "hay.evalBlock() usage" (
     stdout="""
     status 3
     status 3
@@ -766,18 +767,18 @@ testcase "evalHay() usage" (
   shopt -s parse_brace
   
   try {
-    var d = evalHay()
-  }
+    var d = hay.evalBlock()
+  } 2>/dev/null
   echo status $_status
   
   try {
-    var d = evalHay(3)
-  }
+    var d = hay.evalBlock(3)
+  } 2>/dev/null
   echo status $_status
   
   try {
-    var d = evalHay(^(echo hi), 5)
-  }
+    var d = hay.evalBlock(^(echo hi), 5)
+  } 2>/dev/null
   echo status $_status
 }
 
@@ -788,24 +789,22 @@ testcase "Attribute / Data Blocks (package-manager)" (
     level 1 children
     0
     """,
-    # TOEO: add $REPO_ROOT and include testfile
-    fails=true) {
+    ) {
 
   shopt --set parse_proc
   
-  const path = "$REPO_ROOT/spec/testdata/config/package-manager.oil"
+  const path = "$REPO_ROOT/hay/package-manager.oil"
   
-  const block = parseHay(path)
+  const block = hay.parse(path)
   
   hay define Package
-  const d = evalHay(block)
+  hay eval (&d;;block)
+  #const d = hay.evalBlock(block)
   write 'level 0 children' $[len(d['children'])]
   write 'level 1 children' $[len(d['children'][1]['children'])]
 }
 
-testcase Typed Args to Hay Node (
-  # not yet implemented
-  fails=true) {
+testcase Typed Args to Hay Node {
   shopt --set ysh:all
   
   hay define when
@@ -821,7 +820,7 @@ testcase Typed Args to Hay Node (
     }
   }
   
-  = o
+  assert [len(o.children[0].args) === 2]
 }
 
 testcase "OSH and hay (dynamic parsing)" (
@@ -829,40 +828,53 @@ testcase "OSH and hay (dynamic parsing)" (
     backticks
     eval
     TYPE TASK
-    CODE         
-        echo `echo task backticks`
-        eval 'echo task eval'
-      ___
+    CODE           
+          echo `echo task backticks`
+          eval 'echo task eval'
+        ___
     ''',
-    # TODO: make it work
-    fails=true) {
+    ) {
 
   shopt --unset ysh:all
 
-source $REPO_ROOT/spec/testdata/config/osh-hay.osh
+source $REPO_ROOT/hay/osh-hay.osh
 
 # TODO: code not serialized correctly - Samuel brought this up
 }
 
-testcase "CODE node provides code_str, serialized code - issue #2050" (fails=true) {
+testcase "CODE node provides code_str, serialized code - issue #2050" (
+    # cheap trick to keep the whitespace
+    stdout="""
+.               
+        #echo hi
+    
+        # The block causes a bug?  Nesting?
+        cd dist {
+          ./install
+        }
+      
+.
+"""[1:-2]){
   shopt --set ysh:all
   
   hay define Package
   hay define Package/INSTALL
   
-  Package {
-    name = "osh"
-    INSTALL {
-      #echo hi
-  
-      # The block causes a bug?  Nesting?
-      cd dist {
-        ./install
+  hay eval (&o) {
+    Package {
+      name = "osh"
+      INSTALL {
+        #echo hi
+    
+        # The block causes a bug?  Nesting?
+        cd dist {
+          ./install
+        }
       }
     }
   }
   
-  = _hay()
+  echo $[o.children[0].children[0].code_str]
 }
 
 testcase Proc within Hay node (
@@ -874,15 +886,15 @@ testcase Proc within Hay node (
   hay define Package
   
   hay eval (&o) {
-  Package cpython {
-    version = '3.11'
-  
-    proc build {
-      # procs have to capture
-      echo "version=$version"
-      make
+    Package cpython {
+      version = '3.11'
+    
+      proc build {
+        # procs have to capture
+        echo "version=$version"
+        make
+      }
     }
-  }
   }
   
   var build_proc = o.children[0].attrs.build
@@ -906,7 +918,7 @@ testcase Using Hay node from another module (
   
   hay define Package/INSTALL
   
-  use $[ENV.REPO_ROOT]/spec/testdata/config/use-hay.ysh
+  use $[ENV.REPO_ROOT]/hay/use-hay.ysh
   
   #pp test_ (_hay())
   json write (_hay().children[0].attrs)
@@ -922,7 +934,7 @@ testcase Defining Hay node in another module (
     fails=true) {
   shopt --set ysh:all
   
-  use $[ENV.REPO_ROOT]/spec/testdata/config/define-hay.ysh
+  use $[ENV.REPO_ROOT]/hay/define-hay.ysh
   
   Package foo {
     version = '3.3'
