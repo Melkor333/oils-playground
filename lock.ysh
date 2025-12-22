@@ -1,0 +1,36 @@
+#!/usr/bin/env ysh
+
+setglobal LOCK_FILES = {}
+
+proc process-lock(name) {
+  if (name in LOCK_FILES) {
+    echo "Lockfile for '$name' already exists"
+    return 2
+   }
+  # Create a lock with the current PID for the given name
+  var LOCK_FILE = ENV=>get('XDG_RUNTIME_DIR', "/tmp") ++ "/$name.lock"
+  setglobal LOCK_FILES[name] = LOCK_FILE
+  # Check if already running
+  if test -f $LOCK_FILE {
+    var pid = $(cat $LOCK_FILE)
+    if kill -0 $pid 2>/dev/null {
+      echo "'$name' already running with PID $pid" >&2
+      return 1
+    } else {
+      echo "Removing stale lock file" >&2
+      rm -f $LOCK_FILE
+    }
+  }
+  # Create new lock file
+  echo $$ > $LOCK_FILE
+}
+
+proc cleanup(name) {
+  if test -n $[LOCK_FILES[name]] {
+    rm $[LOCK_FILES[name]]
+  } else {
+    echo "Lockfile for $name doesn't exit" >&2
+  }
+}
+
+var __provide__ = :| process-lock cleanup |
