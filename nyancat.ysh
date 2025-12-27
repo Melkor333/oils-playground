@@ -56,10 +56,12 @@ for frame in (frames) {
     }
     call final_frames->append(cur_frame)
 }
-for i, frame in (final_frames) {
-    clear
-    echo $frame
-    sleep 0.1
+while (true) {
+    for i, frame in (final_frames) {
+        clear
+        echo $frame
+        builtin sleep 0.05
+    }
 }
 
 #print (ansi cursor_on)
