@@ -247,7 +247,7 @@ testcase hay eval Attr node, and JSON (
       int = 42
       bool = true
       mynull = null
-      mystr = $'spam\n'
+      mystr = b'spam\n'
   
       mylist = [5, 'foo', {}]
       # TODO: Dict literals need to be in insertion order!
