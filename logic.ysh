@@ -63,7 +63,7 @@ setglobal FACTS = []
 setglobal cursor = 0
 setglobal PROCS = 1
 
-use tui.ysh
+source tui.ysh
 
 # Helpers
 # -------------------------
@@ -81,7 +81,7 @@ proc stats {
   for _, v in (conditions) {
     setvar c += len(v)
   }
-  ... tui log-with-footer
+  ... log-with-footer
     "$[ARGV=>join(' ')]"
     "Conditions: $c facts: $[len(FACTS)]"
     "Evaluated conditions: $evaluated_conditions Evaluated blocks: $evaluated_blocks"
@@ -109,7 +109,7 @@ proc debug-val (name;val) {
 # NEW FACT!
 proc - (...ARGV) {
   if (WORKER) {
-    json write (ARGV) | tr -d '\n' >> $[ENV.CALLBACKD] &
+    fork { json write (ARGV) | tr -d '\n' >> $[ENV.CALLBACKD] }
     return
   }
   debug-val "deduping fact" (ARGV)
@@ -143,11 +143,11 @@ proc catchup_condition(;conditionSet) {
 # add a new condition to our list of conditions
 proc WHEN (pred, ...condition;;;block) {
   if (WORKER) {
-    ... json write ({
+    fork { ... json write ({
           pred,
           condition,
           block: block.sourceCode().code_str
-	    }) | tr -d '\n' >> $[ENV.CALLBACKFD] &
+	    }) | tr -d '\n' >> $[ENV.CALLBACKFD] }
 	  return
   }
   if (conditions=>get(pred) is null) {
@@ -200,7 +200,7 @@ proc WHEN (pred, ...condition;;;block) {
 # used to communicate between processes
 func readJson(input) {
   try {
-    read --raw-line (&line) 
+    read --raw-line (&line)
     write $line | json read (&m)
   }
   if (_error.code === 1) {
@@ -217,7 +217,7 @@ func setupReader(fd) {
     return ([null, fd])
   }
   # read the whole file and follow
-  tail -f -n +0 $fd >{reader} &
+  fork { tail -f -n +0 $fd >{reader} }
   return ([$!, reader])
 }
 
@@ -303,9 +303,29 @@ proc evalCondition(;condition, block, fact) {
   setglobal nesting -= 1
 }
 
+
+
+# delayed show
+proc _show (name) {
+  write $name
+  for i in (FACTS) {
+    if(i[0] === name) {
+      write $[i[1:]=>join(" ")]
+      }
+  }
+}
+
+setglobal _showings = []
+proc show(name) {
+  call _showings->append(name)
+}
+
 source $[ARGV[0]]
 if (MAX_PROC > 0) {
   work
+}
+for name in (_showings) {
+  _show $name
 }
 
 # main process
@@ -359,9 +379,6 @@ if (MAX_PROC > 0) {
 #  }
 #}
 #debug $(rm -rv $temp)
-echo
-debug-val solution (FACTS)
-write
 
 # NEW IDEA
 #--------------------------------------------------

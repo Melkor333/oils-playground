@@ -11,15 +11,15 @@
 - edge i l
 
 - start a
-- start f
-- start l
-WHEN reachable Start First {
+WHEN reachable First {
   WHEN edge $First Second {
-    - reachable $Start $Second
+    - reachable $Second
   }
   WHEN edge Second $First {
-    - reachable $Start $Second
+    - reachable $Second
   }
 }
 WHEN edge One Two { - edge $Two $One }
-WHEN start X { - reachable $X $X }
+WHEN start X { - reachable $X }
+
+show reachable
