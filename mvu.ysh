@@ -1,15 +1,28 @@
 #!/usr/bin/env ysh
+proc input-to-message(listener) {
+  stty -echo
+  fork {
+    redir > $listener {
+    while (true) {
+      read -n 1 char
+      json write ({type: "input", char}, space=0)
+    }
+    }
+  }
+}
 
 proc run() {
   var listener = $(mktemp --tmpdir -u msgs.XXXXX)
   # TODO: trap to cleanup
   mkfifo $listener
+  trap "rm $listener; stty echo" EXIT
   var model
   var msg
   var effect
 
   # run init function
   init (&model, &effect)
+  fork { input-to-message $listener }
 
   while (true) {
     # expect the model & a expression
@@ -22,8 +35,8 @@ proc run() {
     view (model)
 
     redir < $listener {
-    read --raw-line (&msgstring)
-}
+      read --raw-line (&msgstring)
+    }
     # TODO: vibdecode netstring library
     setvar msg = fromJson(msgstring)
 
@@ -33,18 +46,25 @@ proc run() {
 
 # example
 proc init (;model, effect) {
-  call model->setValue(0)
+  call model->setValue({n: 0, i:""})
   call effect->setValue(^(sleep 1; json write ({type: "tick"}, space=0)))
 }
 
 func update(model, msg) {
   if (msg.type === "tick") {
-    return ([model + 1, ^(sleep 1; json write ({type: "tick"}, space=0))])
+    setvar model.n += 1
+    return ([model, ^(sleep 1; json write ({type: "tick"}, space=0))])
   }
+  if (msg.type === 'input') {
+    setvar model.i = msg.char
+    return ([model, ^()])
+  }
+
 }
 
 proc view (;model) {
-  echo $model
+  write -n u'\u{1b}[2K\r'
+  write -n "$[model.n] $[model.i]"
 }
 
 run
