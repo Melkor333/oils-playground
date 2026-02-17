@@ -1,0 +1,50 @@
+#!/usr/bin/env ysh
+
+proc run() {
+  var listener = $(mktemp --tmpdir -u msgs.XXXXX)
+  # TODO: trap to cleanup
+  mkfifo $listener
+  var model
+  var msg
+  var effect
+
+  # run init function
+  init (&model, &effect)
+
+  while (true) {
+    # expect the model & a expression
+      fork {
+    redir > $listener {
+        call io->eval(effect)
+      }
+    }
+    # TODO: make sure the model is a copy?
+    view (model)
+
+    redir < $listener {
+    read --raw-line (&msgstring)
+}
+    # TODO: vibdecode netstring library
+    setvar msg = fromJson(msgstring)
+
+    setvar model, effect = update(model, msg)
+  }
+}
+
+# example
+proc init (;model, effect) {
+  call model->setValue(0)
+  call effect->setValue(^(sleep 1; json write ({type: "tick"}, space=0)))
+}
+
+func update(model, msg) {
+  if (msg.type === "tick") {
+    return ([model + 1, ^(sleep 1; json write ({type: "tick"}, space=0))])
+  }
+}
+
+proc view (;model) {
+  echo $model
+}
+
+run
