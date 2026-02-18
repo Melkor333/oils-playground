@@ -3,10 +3,16 @@ proc input-to-message(listener) {
   stty -echo
   fork {
     redir > $listener {
-    while (true) {
-      read -n 1 char
-      json write ({type: "input", char}, space=0)
-    }
+      while (true) {
+        try {
+          read -n 1 char 2>/dev/null
+        }
+        if failed {
+          exit
+        }
+        # Sometimes this randomly hangs. Unclear why
+        fork { json write ({type: "input", char}, space=0) }
+      }
     }
   }
 }
@@ -15,7 +21,10 @@ proc run() {
   var listener = $(mktemp --tmpdir -u msgs.XXXXX)
   # TODO: trap to cleanup
   mkfifo $listener
-  trap "rm $listener; stty echo" EXIT
+  trap --add EXIT INT {
+    rm $listener
+    stty echo
+  }
   var model
   var msg
   var effect
@@ -24,10 +33,12 @@ proc run() {
   init (&model, &effect)
   fork { input-to-message $listener }
 
+  exec </dev/null
+
   while (true) {
     # expect the model & a expression
-      fork {
-    redir > $listener {
+    fork {
+      redir > $listener {
         call io->eval(effect)
       }
     }
@@ -56,6 +67,10 @@ func update(model, msg) {
     return ([model, ^(sleep 1; json write ({type: "tick"}, space=0))])
   }
   if (msg.type === 'input') {
+    if (msg.char === u'\n' or msg.char === u'\r' or msg.char === u'\f' or msg.char === '') {
+      setvar model.i = 'NO'
+      return ([model, ^()])
+    }
     setvar model.i = msg.char
     return ([model, ^()])
   }
@@ -66,5 +81,4 @@ proc view (;model) {
   write -n u'\u{1b}[2K\r'
   write -n "$[model.n] $[model.i]"
 }
-
 run
