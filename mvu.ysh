@@ -1,4 +1,22 @@
 #!/usr/bin/env ysh
+#
+# Model - View - Update : But in Shell
+# Effects are Commands which are executed in the background
+# Ref: https://oils.pub/release/0.37.0/doc/ref/chap-type-method.html#Command
+# The stdout of an effect goes to a FIFO which is read by the event loop
+# it expects a JSON string which is passed to the `update` func, together with a `model`
+# The model is initially defined by the `init` function, which returns a `model` and a first `effect`
+# The eventloop calls the `view` proc and passes the `model` to render the output.
+# Since the `view` forks, it can't update the `model`.
+# Builtin Messages:
+# Character input: {type: "input", char}
+# Somewhat acurate (millisecond?) Ticks: TODO
+# Signals: TODO
+# Terminal Resize: TODO
+#
+# TODO: Convert into a module that takes an `object` which has init, update and view props
+
+# Helper function that listens to keypresses and converts them into messages
 proc input-to-message(listener) {
   stty -echo
   fork {
@@ -17,9 +35,10 @@ proc input-to-message(listener) {
   }
 }
 
+# setup and eventloop
 proc run() {
   var listener = $(mktemp --tmpdir -u msgs.XXXXX)
-  # TODO: trap to cleanup
+  # TODO: This could also be a plain file and a `tail -f` process could read it
   mkfifo $listener
   trap --add EXIT INT {
     rm $listener
@@ -30,7 +49,8 @@ proc run() {
   var effect
 
   # run init function
-  init (&model, &effect)
+  # TODO: Pass arguments
+  setvar model, effect = init()
   fork { input-to-message $listener }
 
   exec </dev/null
@@ -42,8 +62,8 @@ proc run() {
         call io->eval(effect)
       }
     }
-    # TODO: make sure the model is a copy?
-    view (model)
+    # forkwait to ensure the view can't edit the model!
+    forkwait { view (model) }
 
     redir < $listener {
       read --raw-line (&msgstring)
@@ -51,14 +71,21 @@ proc run() {
     # TODO: vibdecode netstring library
     setvar msg = fromJson(msgstring)
 
-    setvar model, effect = update(model, msg)
+    redir > /dev/null {
+      setvar model, effect = update(model, msg)
+    }
   }
 }
 
-# example
-proc init (;model, effect) {
-  call model->setValue({n: 0, i:""})
-  call effect->setValue(^(sleep 1; json write ({type: "tick"}, space=0)))
+# Example
+# -------
+# Prints seconds since program start (more or less) + the last pressed key
+
+func init() {
+  return ([
+    {n: 0, i:"Press a key!"}, # number and input
+    ^(sleep 1; json write ({type: "tick"}, space=0)) # message
+  ])
 }
 
 func update(model, msg) {
@@ -68,7 +95,7 @@ func update(model, msg) {
   }
   if (msg.type === 'input') {
     if (msg.char === u'\n' or msg.char === u'\r' or msg.char === u'\f' or msg.char === '') {
-      setvar model.i = 'NO'
+      setvar model.i = 'newline and clearline characters are forbidden'
       return ([model, ^()])
     }
     setvar model.i = msg.char
@@ -78,7 +105,10 @@ func update(model, msg) {
 }
 
 proc view (;model) {
+  # clear the line
   write -n u'\u{1b}[2K\r'
+  # print the tick followed by the last pressed character
   write -n "$[model.n] $[model.i]"
 }
+
 run
