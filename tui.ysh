@@ -19,16 +19,16 @@ var COL = {
   default: "${TERM_CSI}39m",
 }
 
-proc run_csi (...ARGV) {
+func run_csi (...ARGV) {
   var self = _escapes # should be an input
   var comm = self[ARGV[0]]
   if (type(comm) === "Str") {
-    write --end '' $comm
+    return ($comm)
   } else {
     if (len(ARGV)>1) {
-      call io->eval(comm, pos_args=ARGV[1:])
+      return (evalExpr(comm, pos_args=ARGV[1:]))
     } else {
-      call io->eval(comm)
+      return (evalExpr(comm))
     }
   }
 }
@@ -37,7 +37,7 @@ proc run_csi (...ARGV) {
 # to allow inspection!
 var _escapes = {
   __invoke__: run_csi,
-  scroll_limit: ^(write --end '' "${TERM_CSI}$1;$2r"),
+  scroll_limit: ^["${TERM_CSI}$1;$2r"],
   scroll_reset: "{TERM_CSI};r",
   terminal_save: "${TERM_CSI}?1049h",
   terminal_restore: "${TERM_CSI}?1049l",
@@ -46,7 +46,10 @@ var _escapes = {
   line_clear: line_clear_key,
   linewrap_disable: "${TERM_CSI}?7l",
   linewrap_enable: "{TERM_CSI}?7h",
-  cursor_pos: ^(write --end '' "${TERM_CSI}$1;$2H"),
+  cursor_pos: ^["${TERM_CSI}$1;$2H"],
+  erase_below: "${TERM_CSI}0J"
+  erase_above: "${TERM_CSI}1J"
+  erase_display: "${TERM_CSI}2J"
   height: TERM_HEIGHT,
   width: TERM_WIDTH,
 }
@@ -80,35 +83,43 @@ proc save-cursor() {
     read -r h w < <(stty size)
     call _cursor_saves->append([h,w])
 }
+
 proc restore-cursor() {
   var h, w = _cursor_saves->pop()
-  run_csi cursor_pos $h $w
+  write --end '' $[run_csi('cursor_pos',h,w)]
 }
+
+proc get-dimensions() {
+  read -r h w < <(stty size)
+  setglobal TERM_HEIGHT = h
+  setglobal TERM_WIDTH = w
+}
+
+get-dimensions
+trap get-dimensions SIGWINCH
 
 setglobal LAST_LOG_LENGTH = 0
 proc log-with-footer (log, ...footer) {
   ### Log a line to stdout but retain the last FOOTER_LINES lines
   #save-cursor
-  var height = $(run_csi height)
-  var width = $(run_csi width)
   var footer_lines = []
   for line in (footer) {
     setvar footer_lines = footer_lines ++ line=>split(u'\n')
   }
 
   #echo $[height - LAST_LOG_LENGTH]
-  run_csi cursor_pos $[height - LAST_LOG_LENGTH + 1] 0
-  run_csi linewrap_disable
+  write -n $[run_csi('cursor_pos',TERM_HEIGHT - LAST_LOG_LENGTH + 1,0)]
+  write -n $[run_csi('linewrap_disable')]
   write $log
   var lines = len(footer_lines)
   for i, line in (footer_lines) {
-    run_csi line_clear
+    write $[run_csi('line_clear')]
     if (i === lines-1) {
-      write --end '' $line
+      write -n $line
       continue
     }
-    if (len(line) >= width) {
-      write $[line[:width]]
+    if (len(line) >= TERM_WIDTH) {
+      write $[line[:TERM_WIDTH]]
     } else {
       write $line
     } 
@@ -119,7 +130,7 @@ proc log-with-footer (log, ...footer) {
 }
 
 proc write-box-border(initheight, initwidth, height, width) {
-  run_csi cursor_pos $initheight $initwidth
+  write -n $[run_csi('cursor_pos', initheight, initwidth)]
   var h = initheight
   var w = initwidth
 
@@ -131,14 +142,14 @@ proc write-box-border(initheight, initwidth, height, width) {
 
   for i in (0..<height) {
     setvar h += 1
-    run_csi cursor_pos $h $w
+    write -n $[run_csi('cursor_pos',h,w)]
     write --end '' $[borders.ud]
-    run_csi cursor_pos $h $[w+width+1]
+    write -n $[run_csi('cursor_pos',h,w+width+1]
     write --end '' $[borders.ud]
   }
 
   setvar h += 1
-  run_csi cursor_pos $h $w
+  write -n $[run_csi('cursor_pos',h,w)]
   write --end $[borders.ur]
   for i in (0..<width) {
     write --end '' $[borders.lr]
@@ -172,15 +183,39 @@ proc write-box-text(x, y, h, w, text;cut=true) {
   } else {
     call t->append("Not implemented")
   }
-  run_csi cursor_pos $[x+1] $[y+1]
+  write -n $[run_csi('cursor_pos',x+1,y+1)]
   for i, line in (t) {
     write --end '' $line
-    run_csi cursor_pos $[x+i+2] $[y+1]
+    write -n $[run_csi('cursor_pos',x+i+2, y+1)]
   }
 }
 
 proc box (x, y, w, h, t) {
   write-box-border $x $y $w $h
   write-box-text $x $y $w $h $t
-    run_csi cursor_pos $[x+h+1] 0
+    write -n $[run_csi('cursor_pos',x+h+1,0)]
 }
+
+setglobal LAST_RENDER_LENGTH = 0
+proc render-view (view;;vertical_bound="t", cursor_hidden=false) {
+  ### redraw and write the view
+  var lines = view=>split(u'\n')
+  var line_count = len(lines)
+
+  if (not cursor_hidden) {
+    write -n $[run_csi('cursor_hide')]
+  }
+  # if we're bottom bound, we only go  to the 
+  if (vertical_bound !== "t") {
+    write -n $[run_csi('cursor_pos', TERM_HEIGHT - line_count + 1, 0)]
+  } else {
+    write -n $[run_csi('cursor_pos', TERM_HEIGHT - LAST_RENDER_LENGTH + 1, 0)]
+  }
+  write -n $[run_csi('erase_below')]
+  write -n $[run_csi('linewrap_disable')]
+  write --end '' $view
+  if (not cursor_hidden) { write -n $[run_csi('cursor_show')] }
+  setglobal LAST_RENDER_LENGTH = line_count
+}
+
+var __provide__ = :| render-view run_csi |
