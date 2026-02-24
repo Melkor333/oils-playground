@@ -59,7 +59,7 @@ var _escapes = {
 # u -> up
 # r -> right
 # d -> down
-# 
+#
 # l -> normal
 # ll -> dashed
 # L -> fat
@@ -122,7 +122,7 @@ proc log-with-footer (log, ...footer) {
       write $[line[:TERM_WIDTH]]
     } else {
       write $line
-    } 
+    }
   }
   #echo OK3
   #restore-cursor
@@ -190,10 +190,63 @@ proc write-box-text(x, y, h, w, text;cut=true) {
   }
 }
 
-proc box (x, y, w, h, t) {
+# legacy
+proc write-box (x, y, w, h, t) {
   write-box-border $x $y $w $h
   write-box-text $x $y $w $h $t
     write -n $[run_csi('cursor_pos',x+h+1,0)]
+}
+
+# TODO: export them
+setglobal NO_WRAP = 0
+setglobal DUMB_WRAP = 1
+setglobal WRAP = 2
+
+## inputs:
+## string
+## int
+## int
+## wrap: NO_WRAP, DUMB,
+## wrap options:
+## outputs:
+## [lines]
+# TODO: align, center, top, left, ... like CSS
+# TODO: border and border_style (taking a list)
+# TODO: styling -> to ensure each line is styled individually
+# TODO: `scroll` variable
+# TODO: Allow passing a `[lines]` object
+# TODO: only split on breakable characters
+# TODO: Wrap vs nowrap
+func paragraph(text, width, height, wrap=DUMB_WRAP) {
+  if (wrap === NO_WRAP) {
+    var lines = text.split(\n)
+  }
+  var out = []
+  if (wrap === NO_WRAP) {
+    for line in (lines) {
+      var line_length = len(line)
+      # TODO: Use length calculator from ble.sh src/canvas.sh ble/utils/s2w
+      # line is longer than width
+      if (line_length > width) {
+        call out->append(line[:width])
+      } elif (line_length !== width) {
+        # right pad
+        # TODO: only part of rendering? -> yes if spans!
+        printf -v l "%s%$[width-line_length]s" $line ""
+        call out->append(lines[c] = l)
+      } else {
+        call out->append(lines[c] = line)
+      }
+    }
+  }
+
+  # Fill rest of the rectangle.
+  # TODO: should this only be a part of rendering? -> yes if we store string size (e.g. add `span` objects)
+  printf -v l "%${width}s" ""
+  for _ in (len(out)..<height) {
+    call out->append(l)
+  }
+  return (out)
 }
 
 setglobal LAST_RENDER_LENGTH = 0
@@ -205,7 +258,7 @@ proc render-view (view;;vertical_bound="t", cursor_hidden=false) {
   if (not cursor_hidden) {
     write -n $[run_csi('cursor_hide')]
   }
-  # if we're bottom bound, we only go  to the 
+  # if we're bottom bound, we only go  to the
   if (vertical_bound !== "t") {
     write -n $[run_csi('cursor_pos', TERM_HEIGHT - line_count + 1, 0)]
   } else {
@@ -218,4 +271,19 @@ proc render-view (view;;vertical_bound="t", cursor_hidden=false) {
   setglobal LAST_RENDER_LENGTH = line_count
 }
 
-var __provide__ = :| render-view run_csi |
+# out: [[x, y, width, height],[x, y, width, height]]
+func verticalSplit(x=0, y=0, width=TERM_WIDTH, height=TERM_HEIGHT, ratio=0.5) {
+  return ([[x, y, int(width*ratio), height], [x+int(width*ratio)+1, y, width-int(width*ratio), height]])
+}
+
+# out: [[x, y, width, height],[x, y, width, height]]
+func horizontalSplit(x=0, y=0, width=TERM_WIDTH, height=TERM_HEIGHT, ratio=0.5) {
+  var firstHeight = int(height*ratio)
+  return ([[x, y, width, int(height*ratio)], [x+int(width*ratio)+1, y, width-int(width*ratio), height]])
+}
+
+## TODO:
+# proc render
+# [[line, length]], [[[start, end, startchar, endchar]]]
+
+var __provide__ = :| paragraph render-view run_csi |
