@@ -1,0 +1,271 @@
+#!/usr/bin/env ysh
+# early early test stage!
+
+setglobal oils_failures_allowed = 4
+use ctx.ysh
+shopt -u strict_errexit
+setglobal REPO_ROOT = $(pwd)
+
+# Hay: Hay Ain't YAML
+setglobal count = 0
+var failcount = 0
+var skipcount = 0
+var acceptedfails = 0 # count of failed but OK
+proc testcase (
+    ...n; ...asserts;
+    status=0, skip=false, fails=false,
+    stdout='', stderr='';
+    block) {
+  setglobal count += 1
+  var name = n=>join(" ")
+  if (status is not null) {
+    call asserts->insert(0, ^[status === out.status])
+  }
+  if (stdout is not null) {
+    call asserts->insert(0, ^[stdout === out.stdout])
+  }
+  if (stderr is not null) {
+    call asserts->insert(0, ^[stderr === out.stderr])
+  }
+
+  write --end '' "$name - "
+  if (skip) {
+    echo "Skipped"
+    setglobal skipcount += 1
+    return
+  }
+  # TODO: maybe something like ysh <<<$block=>getCommand()
+  # to run as separate process!
+  var tmpdir = $(mktemp -d)
+  cd $tmpdir {
+    var out = io.captureAll(block)
+  }
+  rm -r $tmpdir
+
+  var failed = false
+  for a in (asserts) {
+    var assertOut = io.captureAll(^(shopt --unset verbose_errexit; assert (a);))
+    if (assertOut.status !== 0) {
+      if (not failed) {
+        if (fails) {
+	  write "Excepted failure"
+	} else {
+          write "Failed!"
+	}
+      }
+      setvar failed = true
+      if (not fails) {
+        write $[assertOut.stdout=>trim()]
+      }
+    }
+  }
+
+  if (failed) {
+    setglobal failcount += 1
+    if (fails) {
+      setglobal acceptedfails += 1
+    } else {
+      = out
+    }
+  }
+
+  if (not failed) {
+    write 'Success'
+  }
+}
+
+func sanitizeFd(fd) {
+  if (fd === '-') {
+    return ('/dev/stdin')
+  } else { return (fd) }
+}
+# read json into dic, compare, print json diff if they're actually different
+proc json-diff (one, two) {
+  read --all (&a) < $[sanitizeFd(one)]
+  read --all (&b) < $[sanitizeFd(two)]
+  try {
+    assert [fromJson(a) === fromJson(b)]
+    return
+  }
+  echo $one >&2
+  echo $two >&2
+  try {
+    diff <(write $one | sort) <(write $two | sort)
+    diff <(write $one) <(write $two)
+  }
+  return $?
+}
+# --------------------------------------
+
+
+
+testcase ctx push and set (
+    stdout="""
+{
+  "key1": "value1",
+  "key2": "value2"
+}
+    """) {
+  #### ctx push and set
+  var mydict = {}
+  ctx push (mydict) {
+    ctx set (key1="value1")
+    ctx set (key2="value2")
+  }
+  json write (mydict)
+}
+
+testcase ctx emit {
+  var p = {}
+  ctx push (p) {
+    ctx emit flag ({short_name: '-v'})
+    # p => {'flag': [{short_name: '-v'}]}
+    json write (p) > actual.txt
+
+    json-diff - actual.txt <<EOF
+{
+  "flag": [
+    {
+      "short_name": "-v"
+    }
+  ]
+}
+EOF
+  
+    ctx emit flag ({short_name: '-c'})
+    # p => {'flag': [{short_name: '-v'}, {short_name: '-c'}]}
+    json write (p) > actual.txt
+    json-diff - actual.txt <<EOF
+{
+  "flag": [
+    {
+      "short_name": "-v"
+    },
+    {
+      "short_name": "-c"
+    }
+  ]
+}
+EOF
+  }
+  json write (p) > actual.txt
+  json-diff - actual.txt <<EOF
+{
+  "flag": [
+    {
+      "short_name": "-v"
+    },
+    {
+      "short_name": "-c"
+    }
+  ]
+}
+EOF
+}
+
+testcase nested ctx {
+  var a = {}
+  var b = {}
+  ctx push (a) {
+    ctx set (from="a")
+    ctx push (b) {
+      ctx set (from="b")
+    }
+  }
+  json-diff - <(json write (a)) <<<"""
+  {'from':'a'}
+  """
+  json-diff - <(json write (b)) <<<"""
+  {'from':'b'}
+  """
+}
+
+##### error in context
+#var a = {}
+#try {
+#  ctx push (a) {
+#    error "Error from inside a context" (code=100)
+#  }
+#}
+#echo status=$_status
+#exit 0
+### STDOUT:
+#status=100
+### END
+#
+##### no context, set
+#ctx set (bad=true)
+#echo status=$_status
+### status: 3
+### STDOUT:
+### END
+#
+##### no context, emit
+#ctx emit bad (true)
+#echo status=$_status
+### status: 3
+### STDOUT:
+### END
+#
+##### mini-parseArgs
+#proc parser (; place ; ; block_def) {
+#  var p = {}
+#  ctx push (p; ; block_def)
+#  call place->setValue(p)
+#}
+#
+#var Bool = "Bool"
+#var Int = "Int"
+#proc flag (short_name, long_name; type; help) {
+#  ctx emit flag ({short_name, long_name, type, help})
+#}
+#
+#proc arg (name) {
+#  ctx emit arg ({name})
+#}
+#
+#parser (&spec) {
+#  flag -t --tsv (Bool, help='Output as a TSV')
+#  flag -r --recursive (Bool, help='Recurse into the given directory')
+#  flag -N --count (Int, help='Process no more than N files')
+#  arg path
+#}
+#json write (spec)
+### STDOUT:
+#{
+#  "flag": [
+#    {
+#      "short_name": "-t",
+#      "long_name": "--tsv",
+#      "type": "Bool",
+#      "help": "Output as a TSV"
+#    },
+#    {
+#      "short_name": "-r",
+#      "long_name": "--recursive",
+#      "type": "Bool",
+#      "help": "Recurse into the given directory"
+#    },
+#    {
+#      "short_name": "-N",
+#      "long_name": "--count",
+#      "type": "Int",
+#      "help": "Process no more than N files"
+#    }
+#  ],
+#  "arg": [
+#    {
+#      "name": "path"
+#    }
+#  ]
+#}
+### END
+#
+##### ctx with value.Place, not List/Dict (error location bug fix)
+#
+#ctx push (&p) {
+#  true
+#}
+### status: 3
+### STDOUT:
+### END
