@@ -23,7 +23,7 @@ func run_csi (...ARGV) {
   var self = _escapes # should be an input
   var comm = self[ARGV[0]]
   if (type(comm) === "Str") {
-    return ($comm)
+    return (comm)
   } else {
     if (len(ARGV)>1) {
       return (evalExpr(comm, pos_args=ARGV[1:]))
@@ -144,7 +144,7 @@ proc write-box-border(initheight, initwidth, height, width) {
     setvar h += 1
     write -n $[run_csi('cursor_pos',h,w)]
     write --end '' $[borders.ud]
-    write -n $[run_csi('cursor_pos',h,w+width+1]
+    write -n $[run_csi('cursor_pos',h,w+width+1)]
     write --end '' $[borders.ud]
   }
 
