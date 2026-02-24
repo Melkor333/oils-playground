@@ -1,0 +1,47 @@
+#!/usr/bin/env ysh
+# Command execution prototyping
+
+use $LIB_YSH/args.ysh --pick parser parseArgs
+use $_this_dir/ctx.ysh
+
+echo @ARGV
+
+proc run (;;;block) {
+  ctx set (run=block)
+}
+
+proc when (;;;block) {
+  ctx set (when=block)
+}
+
+proc - (name;;;block) {
+  var args = {}
+  ctx push (args) {
+    # TODO: to `io` or not to `io`?
+    call eval(block)
+  }
+  ctx emit $name (args)
+}
+
+if is-main {
+  parser (&argspec) {
+    arg file (help="the file with the commands")
+  }
+  setglobal arg = parseArgs(argspec, ARGV)
+  var code = $(cat $[arg.file])
+  var block = parseCommand(code)
+  var commands = {}
+  ctx push (commands) {
+    call io->eval(block)
+  }
+  = commands
+  var usable_commands = {}
+  for command, args in (commands) {
+    try {
+      call io->eval(args.when)
+    }
+    if failed { continue }
+    setvar usable_commands[command] = args
+  }
+  = usable_commands
+}

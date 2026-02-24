@@ -1,0 +1,20 @@
+#!/usr/bin/env -S ysh -c "./cmd.ysh commands.hay"
+# demo command definition for testing with cmd.ysh
+
+- lustre-dev-server {
+  run {
+    gleam run -m lustre/dev start
+  }
+  when {
+    grep lustre gleam.toml
+  }
+}
+
+- trail-dev-server {
+  run {
+    trail run --public-dir ./dist/ --dev
+  }
+  when {
+    test -d traildepot
+  }
+}
