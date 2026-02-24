@@ -1,0 +1,182 @@
+#!/usr/bin/env ysh
+#
+# Script to:
+# - generate a jsonschema from json files (with Gum)
+# - validate a json string against a schema
+
+source --builtin ysh/args.ysh
+
+parser (&spec) {
+  #  arg command (help="What to do (convert or validate)")
+  arg json (help="The json file", default="config.json")
+  #arg schema (help="a filename for the jsonschema", default="jsonschema.json")
+  flag -n --noask (help="Don't ask any questions!")
+}
+
+func askText(io, question) {
+  if (arg.noask) { return (null) }
+  var text
+  call io->eval(^(write $question; read --raw-line (&text);), in_captured_frame=true)
+  if (text === '') { return (null) }
+  return (text)
+}
+
+# fallBack
+func b (...options) {
+  for o in (options) {
+    if (o is not null) {
+      return (o)
+    }
+  }
+  return (null)
+}
+
+func yesno (io, question) {
+  while (true) {
+    var answer = b(askText(io, question ++ " (Y/n) "), '')=>lower()
+    if (:|y yes ''|=>indexOf(answer) !== -1) {
+      return (true)
+    } elif (:|n no|=>indexOf(answer) !== -1) {
+      return (false)
+    }
+    echo "Need to answer with either yes/y/no/n"
+  }
+}
+
+func choose(io, question, options, default='') {
+  var d
+  if (options=>indexOf(default) === -1) {
+    setvar d = options[0]
+  } else {
+    setvar d = default
+  }
+  if (arg.noask) {
+    return (d)
+  }
+  var text = question
+  var count = 0
+  for o in (options) {
+    setvar count += 1
+    setvar text = (text
+         ++ u'\n'
+	 ++ str(count)
+	 ++ ' '
+	 ++ o)
+     
+    if (o === d) {
+      setvar text = text ++ '*'
+    }
+  }
+  setvar text = text ++ u'\n' ++ "Please select a number between 1-$count. (default: $d)"
+  var a
+  while (true) {
+    var answer = askText(io, text)
+    if (answer is null) {
+      return (d)
+    }
+    try {
+      setvar a = int(answer)
+    }
+    if (_error.code === 0
+        and a <= count
+	and a > 0) {
+      return (options[a-1])
+    }
+    echo "invalid input"
+  }
+}
+
+# used for patternProperties and arrays
+func mergeTypes(one, two) {
+  # it's OK to be null when it's the first elem of an array
+  if (type(one) === 'null') {
+    return (two)
+  }
+  assert [type(one) === 'Dict']
+  assert [type(two) === 'Dict']
+  var out = {}
+
+  # bool/string need no merging
+  if (one.type === two.type
+      and :|string bool|=>indexOf(one.type) !== -1) {
+      return (one)
+  }
+  case (one.type) {
+    string {
+      if (two.type === 'object') {
+        setvar two.type = :|string object|
+	return (two)
+      }
+
+    }
+
+  }
+  #for name, elem in (one) {
+    #TODO: merge e.g. {type: string} 
+    # {type: object, properties...}
+    # into {type:[string, obj], properties ...}
+    # CURSOR
+  #}
+}
+
+func makeSchema(io, name, elem) {
+  var description = askText(io, "What's the description of '$name'")
+  var out = {}
+  case (type(elem)) {
+    Str {
+      setvar out = { type: "string" } 
+    }
+    Dict {
+      setvar out.type = "object"
+      setvar out.additionalProperties = yesno(io,"Does it allow additional properties?")
+      var properties = {}
+      var patternProperties = {}
+      for childName, childElem in (elem) {
+	# TODO: add existing patternproperties!
+	case (choose(io, "What should '$childName' be: $(json write (childElem))", :|property patternProperty|)) {
+	  property {
+	    setvar properties[childName] = makeSchema(io, childName, childElem)
+	  }
+	  patternProperty {
+	    var _name = b(askText(io, "What's the regex?"), ".*")
+
+	    setvar patternProperties[_name] = makeSchema(io, childName, childElem)
+
+	  }
+	}
+      }
+      if (len(properties)) {
+        setvar out.properties = properties
+      }
+      if (len(patternProperties)) {
+        setvar out.patternProperties = patternProperties
+      }
+    }
+    Bool {
+      setvar out.type = "bool"
+    }
+    List {
+      setvar out.type = "array"
+      for child in (elem) {
+	# TODO: Merge!
+        setvar out.items = makeSchema(io, "child of $name", child)
+      }
+
+    }
+  }
+  if (description is not null and description !== '') {
+    setvar out.description = description
+  }
+  return (out)
+}
+
+setglobal arg = parseArgs(spec, ARGV)
+json read (&j) < $[arg.json]
+# TODO: only show the toplevel if obj?
+= j
+var schema = makeSchema(io, "toplevel", j)
+setvar schema['$schema'] = b(askText(io, "what's the schema?"), "https://json-schema.org/draft/2020-12/schema")
+setvar schema['$id'] = b(askText(io, "what's the id?"), '')
+setvar schema.title = b(askText(io, "What's the title of the schema?"), '')
+
+json write (schema)
