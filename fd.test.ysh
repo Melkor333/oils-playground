@@ -1,0 +1,15 @@
+use fd.ysh
+
+var num = ^(for line in (1..=26) { json write (line) };)
+var abc = ^(for line in (65..=200) { json write ($(printf "\\x$(printf %x $line)")) };)
+fd multiple-inputs num-alphabet (num, abc) {
+  echo $1 $2
+}
+
+## multiple-inputs waits. optional doesn't
+var num = ^(for line in (1..=26) { json write (line); sleep 2 };)
+var abc = ^(for line in (65..=200) { json write ($(printf "\\x$(printf %x $line)")) };)
+fd optional-inputs num-alphabet (num, abc) {
+  echo $1 $2
+  sleep 1
+}

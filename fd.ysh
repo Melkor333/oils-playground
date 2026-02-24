@@ -1,0 +1,48 @@
+#!/usr/bin/ysh
+# library to easen file descriptor handling stuff
+
+#proc background (;stdout,stderr=null;;block) {
+#  ### Run in background, redirect STDOUT/STDERR and set fds
+#  exec {FD}< 2>{FDE} <(
+#    fork {
+#      call io->eval(block)
+#	  #exec >&-
+#    }
+#  )
+#  call stdout->setVal(FD)
+#  if (stderr is not null) {
+#    call stdout->setVal(FDE)
+#  }
+#}
+
+proc multiple-inputs (name, ...inputs;...inProcs;;block) {
+  var fds = []
+  for p in (inProcs) {
+    exec {FD}< <(
+    fork {
+          call io->eval(p)
+    }
+    )
+    call fds->append(FD)
+  }
+  var input
+  var args
+  var fd_closed = false
+  while (true) {
+    setvar input = ''
+    #setvar args = []
+    setvar args = list(inputs)
+    for fd in (fds) {
+      try {
+        read --raw-line (&input) <&$fd
+      } 2>/dev/null
+      if (_error.code !== 0) {
+        return
+      }
+      setvar input = fromJson8(input)
+      call args->append(str(input))
+    }
+    call io->eval(block, pos_args=args)
+  }
+}
+var __provide__ = :|multiple-inputs|
