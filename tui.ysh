@@ -1,6 +1,16 @@
-var TERM_CR  = u'\u{0D}'
-var TERM_ESC = u'\u{1B}'
-var line_clear_key = $(tput el)
+setglobal TERM_CR  = u'\u{0D}'
+setglobal TERM_ESC = u'\u{1B}'
+setglobal TERM_RESET = "${TERM_ESC}c"
+setglobal line_clear_key = $(tput el)
+
+const CURSOR_DEFAULT = 0
+const CURSOR_BLINK_BLOCK = 1
+const CURSOR_STEADY_BLOCK = 2
+const CURSOR_BLINK_UNDERLINE = 3
+const CURSOR_STEADY_UNDERLINE = 4
+const CURSOR_BLINK_VERTICAL = 5
+const CURSOR_STEADY_VERTICAL = 6
+
 # Get terminal size ('stty' is POSIX and always available).
 # This can't be done reliably across all bash versions in pure bash.
 # TODO: hook to update on change
@@ -26,7 +36,11 @@ func run_csi (...ARGV) {
     return (comm)
   } else {
     if (len(ARGV)>1) {
-      return (evalExpr(comm, pos_args=ARGV[1:]))
+      var args = []
+      # TODO: evalExpr should stringify args
+      # TODO: Create upstream issue
+      for arg in (ARGV[1:]) { call args->append(str(arg))}
+      return (evalExpr(comm, pos_args=args))
     } else {
       return (evalExpr(comm))
     }
@@ -37,21 +51,24 @@ func run_csi (...ARGV) {
 # to allow inspection!
 var _escapes = {
   __invoke__: run_csi,
-  scroll_limit: ^["${TERM_CSI}$1;$2r"],
-  scroll_reset: "{TERM_CSI};r",
-  terminal_save: "${TERM_CSI}?1049h",
-  terminal_restore: "${TERM_CSI}?1049l",
+  height: TERM_HEIGHT,
+  width: TERM_WIDTH,
+
   cursor_hide: "${TERM_CSI}?25l",
+  cursor_pos: ^["${TERM_CSI}$1;$2H"],
   cursor_show: "${TERM_CSI}?25h",
+  cursor_up: ^["${TERM_CSI}$1A"],
+  cursor_style:  ^["${TERM_CSI}$1 q"],
+  erase_above: "${TERM_CSI}1J"
+  erase_below: "${TERM_CSI}0J"
+  erase_display: "${TERM_CSI}2J"
   line_clear: line_clear_key,
   linewrap_disable: "${TERM_CSI}?7l",
   linewrap_enable: "{TERM_CSI}?7h",
-  cursor_pos: ^["${TERM_CSI}$1;$2H"],
-  erase_below: "${TERM_CSI}0J"
-  erase_above: "${TERM_CSI}1J"
-  erase_display: "${TERM_CSI}2J"
-  height: TERM_HEIGHT,
-  width: TERM_WIDTH,
+  reset: "{TERM_CSI};r",
+  scroll_limit: ^["${TERM_CSI}$1;$2r"],
+  terminal_restore: "${TERM_CSI}?1049l",
+  terminal_save: "${TERM_CSI}?1049h",
 }
 
 # see https://en.m.wikipedia.org/wiki/Box-drawing_characters
@@ -97,6 +114,7 @@ proc get-dimensions() {
 
 get-dimensions
 trap get-dimensions SIGWINCH
+trap "write -n $TERM_RESET$[run_csi('cursor_show')]$[run_csi('cursor_style', CURSOR_DEFAULT)]" EXIT
 
 setglobal LAST_LOG_LENGTH = 0
 proc log-with-footer (log, ...footer) {
@@ -250,24 +268,26 @@ func paragraph(text, width, height, wrap=DUMB_WRAP) {
 }
 
 setglobal LAST_RENDER_LENGTH = 0
-proc render-view (view;;vertical_bound="t", cursor_hidden=false) {
+proc render-view (view;;vertical_bound="t", hide_cursor=false) {
   ### redraw and write the view
   var lines = view=>split(u'\n')
   var line_count = len(lines)
 
-  if (not cursor_hidden) {
-    write -n $[run_csi('cursor_hide')]
-  }
+  # TODO: Store cursor state, don't hide every time
+  write -n $[run_csi('cursor_hide')]
   # if we're bottom bound, we only go  to the
-  if (vertical_bound !== "t") {
-    write -n $[run_csi('cursor_pos', TERM_HEIGHT - line_count + 1, 0)]
-  } else {
-    write -n $[run_csi('cursor_pos', TERM_HEIGHT - LAST_RENDER_LENGTH + 1, 0)]
+  if (LAST_RENDER_LENGTH > 0) {
+    if (vertical_bound !== "t") {
+      write -n $[run_csi('cursor_up', LAST_RENDER_LENGTH)]
+    } else {
+      write -n $[run_csi('cursor_pos', line_count)]
+    }
   }
+  write -n $[\r]
   write -n $[run_csi('erase_below')]
   write -n $[run_csi('linewrap_disable')]
   write --end '' $view
-  if (not cursor_hidden) { write -n $[run_csi('cursor_show')] }
+  if (not hide_cursor) { write -n $[run_csi('cursor_show')] }
   setglobal LAST_RENDER_LENGTH = line_count
 }
 

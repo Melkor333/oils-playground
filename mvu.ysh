@@ -28,22 +28,30 @@ proc input-to-message(listener) {
         if failed {
           exit
         }
+        # TODO: Translate ble.sh src/decode.sh key decoding
         # Sometimes this randomly hangs. Unclear why
-        fork { json write ({type: "input", char}, space=0) }
+        message ({type: "input", char})
       }
     }
   }
 }
 
+proc message (;message) {
+  # ensure we write to the right place!
+  redir > $LISTENER {
+    # we need to fork, because it sometimes hangs
+    # I suspect a bug on android with fifos
+    fork { json write (message, space=0) }
+  }
+}
+
 # setup and eventloop
 proc run() {
-  var listener = $(mktemp --tmpdir -u msgs.XXXXX)
+  setglobal LISTENER = $(mktemp --tmpdir -u msgs.XXXXX)
   # TODO: This could also be a plain file and a `tail -f` process could read it
-  mkfifo $listener
-  trap --add EXIT INT {
-    rm $listener
-    stty echo
-  }
+  mkfifo $LISTENER
+  trap "rm $LISTENER" EXIT INT
+
   var model
   var msg
   var effect
@@ -51,21 +59,25 @@ proc run() {
   # run init function
   # TODO: Pass arguments
   setvar model, effect = init()
-  fork { input-to-message $listener }
+  fork { input-to-message $LISTENER }
 
   exec </dev/null
 
   while (true) {
     # expect the model & a expression
-    fork {
-      redir > $listener {
-        call io->eval(effect)
+    if (effect is not null) {
+      fork {
+        redir > $LISTENER {
+          call io->eval(effect)
+        }
       }
     }
     # forkwait to ensure the view can't edit the model!
-    forkwait { view (model) }
+    if (model is not null) {
+      forkwait { view (model) }
+    }
 
-    redir < $listener {
+    redir < $LISTENER {
       read --raw-line (&msgstring)
     }
     # TODO: vibdecode netstring library
@@ -77,38 +89,40 @@ proc run() {
   }
 }
 
+var __provide__ = :| run |
+
 # Example
 # -------
 # Prints seconds since program start (more or less) + the last pressed key
 
-func init() {
-  return ([
-    {n: 0, i:"Press a key!"}, # number and input
-    ^(sleep 1; json write ({type: "tick"}, space=0)) # message
-  ])
-}
-
-func update(model, msg) {
-  if (msg.type === "tick") {
-    setvar model.n += 1
-    return ([model, ^(sleep 1; json write ({type: "tick"}, space=0))])
-  }
-  if (msg.type === 'input') {
-    if (msg.char === u'\n' or msg.char === u'\r' or msg.char === u'\f' or msg.char === '') {
-      setvar model.i = 'newline and clearline characters are forbidden'
-      return ([model, ^()])
-    }
-    setvar model.i = msg.char
-    return ([model, ^()])
-  }
-
-}
-
-proc view (;model) {
-  # clear the line
-  write -n u'\u{1b}[2K\r'
-  # print the tick followed by the last pressed character
-  write -n "$[model.n] $[model.i]"
-}
+#func init() {
+#  return ([
+#    {n: 0, i:"Press a key!"}, # number and input
+#    ^(sleep 1; json write ({type: "tick"}, space=0)) # message
+#  ])
+#}
+#
+#func update(model, msg) {
+#  if (msg.type === "tick") {
+#    setvar model.n += 1
+#    return ([model, ^(sleep 1; json write ({type: "tick"}, space=0))])
+#  }
+#  if (msg.type === 'input') {
+#    if (msg.char === u'\n' or msg.char === u'\r' or msg.char === u'\f' or msg.char === '') {
+#      setvar model.i = 'newline and clearline characters are forbidden'
+#      return ([model, ^()])
+#    }
+#    setvar model.i = msg.char
+#    return ([model, ^()])
+#  }
+#
+#}
+#
+#proc view (;model) {
+#  # clear the line
+#  write -n u'\u{1b}[2K\r'
+#  # print the tick followed by the last pressed character
+#  write -n "$[model.n] $[model.i]"
+#}
 
 run
