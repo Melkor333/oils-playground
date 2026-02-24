@@ -1,0 +1,34 @@
+#!/usr/bin/env ysh
+
+#<a href="?f%5B0%5D=alter%3Ajunior&amp;f%5B1%5D=geschlecht%3Afemale&amp;f%5B2%5D=groesse%3A77&amp;f%5B3%5D=groesse%3A79&amp;f%5B4%5D=inseratetyp%3A114&amp;page=2" title="Zur n\xc3\xa4chsten Seite" rel="next">
+
+#https://www.petfinder.ch/inserate/hund-kaufen?alter=senior&f[0]=alter%3Aadult&f[1]=groesse%3A77&f[2]=groesse%3A79&page=1
+
+var base = "https://www.petfinder.ch"
+var slug ='/inserate/hund-kaufen?alter=senior&f%5B0%5D=alter%3Aadult&f%5B1%5D=groesse%3A77&f%5B2%5D=groesse%3A79'
+var dog_pages_regex = / '/inserate/hund/' ![ '"' ]* /
+var page = 0
+var url = base ++ slug
+var dog_slugs = $(try curl -sf $base$slug | grep -o $dog_pages_regex)
+while (true) {
+    for dog_slug in (dog_slugs=>split()) {
+        #if (true ) { break }
+        fork {
+          var dog_page = $(curl -sf $base$dog_slug)
+          echo $dog_page | grep -A 1 Herkunft | try grep Schweiz
+        if (_status === 0) {
+            echo $base$dog_slug $(echo $dog_page | grep -m 1 'Monat\|Jahr') >> doglist
+        } #else {
+        #    echo NO $base$dog_slug
+        #}
+        }
+    }
+    setvar page += 1
+    #echo $base$slug"&page="$page
+    setvar dog_slugs = $(curl -sf $base$slug"&page="$page | grep -o $dog_pages_regex)
+    #= dog_slugs
+    if (dog_slugs=>split()=>len() < 2) {
+        wait
+        exit
+    }
+}
