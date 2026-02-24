@@ -1,3 +1,4 @@
+#!/usr/bin/env ysh
 # yay! the nyancat in ~~nushell~~ Oils!
 # based off this C code https://github.com/klange/nyancat
 

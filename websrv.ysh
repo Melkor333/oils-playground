@@ -18,14 +18,14 @@ setglobal arg = parseArgs(spec, ARGV)
 
 proc log {
   if (arg.verbose) {
-    write --end '' u'\u{1B}[31m' "$[ARGV =>join(' ')=>trimEnd($'\n')]" u'\u{1B}[0m' >&2
+    write --end '' u'\u{1B}[31m' "$[ARGV =>join(' ')=>trimEnd(b'\n')]" u'\u{1B}[0m' >&2
   }
 }
 
 # http uses \r\n
 proc hwrite {
   log @ARGV
-  write --end $'\r\n' "$[ARGV=>join()]"
+  write --end b'\r\n' "$[ARGV=>join()]"
 }
 
 var first_reg = / <capture ![ space ]+ as type> space <capture ![ space ]+ as slug> space 'HTTP/1.1' .*/
@@ -34,7 +34,7 @@ var header_reg = / <capture ![ ':' ]+ as key> ': ' <capture .+ as value> /
 typed proc parse-header (;out) {
   var h = {}
   read first
-  var raw = first ++ $'\r\n'
+  var raw = first ++ b'\r\n'
   if (first ~ first_reg) {
     setvar h.type = _group('type')
     setvar h.slug = _group('slug')
@@ -48,7 +48,7 @@ typed proc parse-header (;out) {
      break
     }
 
-    setvar raw = raw ++ line ++ $'\r\n'
+    setvar raw = raw ++ line ++ b'\r\n'
     # assert might be a bit aggressive :shrug:
     # but it might get us the _group :)
     assert (line ~ header_reg)
@@ -83,7 +83,7 @@ proc return-request () {
 }
 
 proc write-404 (file) {
-  var msg = "<head></head><body><h1>File not found $file</h1></body>" ++ $'\n'
+  var msg = "<head></head><body><h1>File not found $file</h1></body>" ++ b'\n'
   hwrite 'HTTP/1.1 404 File not found'
   hwrite "Content-Type: text/html"
   hwrite "Content-Length: $[len(msg)+1]"
