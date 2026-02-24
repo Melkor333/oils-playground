@@ -1,0 +1,50 @@
+#!/usr/bin/env ysh
+
+# sourced by generator.ysh!
+
+# TODO: `use` should be allowed within a block!
+# it's now in generator.ysh
+use $LIB_YSH/math.ysh
+use tui.ysh
+use testing.ysh --pick p-test positive_int alphanum
+
+p-test 'paragraph: short string, only one line' {
+  var string_l = positive_int(1, 40)
+  var paragraph_w = positive_int(1, 40)
+  var input = alphanum(string_l)
+  var paragraph = tui.paragraph(input, paragraph_w, 1)
+  = input
+  = paragraph
+  # check paragraph length
+  assert [len(paragraph[0]) === paragraph_w ]
+  assert [len(paragraph) === 1 ]
+  if (string_l >= paragraph_w) {
+    # Check p contains a part of the string
+    assert [paragraph[0] === input[:paragraph_w]]
+  } else {
+    assert [paragraph[0][:string_l] === input]
+  }
+}
+
+p-test 'paragraph: long word with wrapping' {
+  # Todo: wrap
+  var string_l = positive_int(5000, 10000)
+  var paragraph_w = positive_int(100, 400)
+  var paragraph_h = positive_int(2, 20)
+  var input = alphanum(string_l)
+  var paragraph = tui.paragraph(input, paragraph_w, 1, wrap=true)
+  = input
+  = paragraph
+  assert [paragraph_w === len(paragraph[0])]
+  if (string_l >= paragraph_w) {
+    assert [input[:paragraph_w] === paragraph[0]]
+    = math.min(int(string_l * paragraph_w), paragraph_h)
+    assert [
+      math.min(int(string_l * paragraph_w), paragraph_h)
+      === len(paragraph)]
+  } else {
+    assert [paragraph[0][:string_l] === input]
+
+  }
+}
+

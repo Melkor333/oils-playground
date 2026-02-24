@@ -1,0 +1,69 @@
+#!/usr/bin/env ysh
+
+use ctx.ysh
+
+# TODO: remove, it's only used for testing tui.ysh!
+# IDEA: use `generate.ysh` as module...
+#use tui.ysh
+
+# Weirdly, thats rhe easiest way to get a UNIX timestamp in POSIX shell
+# TODO: Add config option for seed
+setglobal _SEED = $(awk 'BEGIN {srand();print srand()}')
+
+func positive_int(min, max) {
+  setglobal SEED += 1
+  # https://unix.stackexchange.com/questions/140750/generate-random-numbers-in-specific-range
+  var num = $(awk -v seed=$SEED -v min=$min -v max=$max 'BEGIN{srand(seed); print int(min+rand()*(max-min+1))}')
+  return (int(num))
+}
+
+func alphanum(length) {
+  setglobal SEED += 1
+  # https://stackoverflow.com/questions/50431190/how-can-i-generate-an-alphanumeric-string-using-only-posix-compliant-shell-tools
+  return ($(awk -v seed=$SEED -v l=$length '
+    BEGIN {
+      srand(seed);
+      chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+      s = "";
+      for(i=0;i<l;i++) {
+        s = s "" substr(chars, int(rand()*62), 1);
+      }
+      print s
+    }
+    '))
+}
+
+# Property test
+proc p-test (name;;;block) {
+  write -n "testcase: $name "
+  # reset seed before testcase
+  setglobal SEED = _SEED
+  var o = io.captureAll(block)
+  if (o.status === 0) {
+    ctx emit success ([name, o])
+    write "success"
+    write $[o.stderr]
+  } else {
+    ctx emit failed ([name, o])
+    write "fail"
+    = o
+  }
+}
+
+proc run (filename) {
+  var code = $(cat $filename)
+  var block = parseCommand(code)
+  var outputs = {}
+  ctx push (outputs) {
+    call io->eval(block)
+  }
+  #= outputs
+  # todo
+  echo used seed: $_SEED
+}
+
+if is-main {
+  runproc @ARGV
+}
+
+var __provide__ = :|run p-test positive_int alphanum|
