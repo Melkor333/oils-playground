@@ -17,10 +17,10 @@
 # TODO: Convert into a module that takes an `object` which has init, update and view props
 
 # Helper function that listens to keypresses and converts them into messages
-proc input-to-message(listener) {
+proc input-to-message(listener, source) {
   stty -echo
   fork {
-    redir > $listener {
+    redir >> $listener {
       while (true) {
         try {
           read -n 1 char 2>/dev/null
@@ -30,15 +30,42 @@ proc input-to-message(listener) {
         }
         # TODO: Translate ble.sh src/decode.sh key decoding
         # Sometimes this randomly hangs. Unclear why
-        message ({type: "input", char})
+        message ({src: source, type: "input", char})
       }
     }
   }
 }
 
+# Retuen a command for which output is sent back as messages
+proc wrapped-command (source;var;;block) {
+  call var->setValue(^(
+  var listener = $(mktemp --tmpdir -u)
+  echo $listener
+  mkfifo $listener
+    fork {
+  redir <$listener >>$LISTENER {
+      var out
+      while (true) {
+        try { read -n 1 out }
+        if failed { break }
+        if (len(out) > 0) {
+          message ({type: "input", src: source, char:out})
+        }
+        setvar out = ''
+      }
+    }
+  }
+
+  try {
+    redir >>$listener { call io->eval(block) }
+  }
+  message ({type: "commandFinished", source, error: _error })
+  rm $listener
+  ))
+}
 proc message (;message) {
   # ensure we write to the right place!
-  redir > $LISTENER {
+  redir >> $LISTENER {
     # we need to fork, because it sometimes hangs
     # I suspect a bug on android with fifos
     fork { json write (message, space=0) }
@@ -59,7 +86,7 @@ proc run() {
   # run init function
   # TODO: Pass arguments
   setvar model, effect = init()
-  fork { input-to-message $LISTENER }
+  fork { input-to-message $LISTENER keyboard }
 
   exec </dev/null
 
@@ -67,7 +94,7 @@ proc run() {
     # expect the model & a expression
     if (effect is not null) {
       fork {
-        redir > $LISTENER {
+        redir >> $LISTENER {
           call io->eval(effect)
         }
       }
@@ -125,4 +152,4 @@ var __provide__ = :| run |
 #  write -n "$[model.n] $[model.i]"
 #}
 
-run
+#run
