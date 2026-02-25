@@ -39,5 +39,4 @@ proc view (;model) {
 #use ./../mvu.ysh
 #mvu run (init, update, view)
 source $_this_dir/../mvu.ysh
-= init()
 run

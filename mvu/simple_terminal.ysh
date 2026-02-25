@@ -1,0 +1,60 @@
+#!/usr/bin/env ysh
+# A very simple app that just increments a number every second
+
+use $_this_dir/../tui.ysh
+
+const PROMPT = 0
+const COMMAND = 1
+
+func init() {
+  # prompt
+  var model = [PROMPT, ""]
+  return ([model, null])
+}
+
+func update(model, msg) {
+  case (model[0]) {
+    (PROMPT) {
+      if (msg.type === "input") {
+        if (msg.char === u'') {
+          wrapped-command cmd (&cmd) {
+            call io->eval(parseCommand(model[1]))
+          }
+          # switching to COMMAND mode
+          return ([[COMMAND, ""], cmd])
+        }
+      }
+      return ([[PROMPT, model[1]++msg.char], null])
+    }
+    (COMMAND) {
+      if (msg.type === "input" and msg.src === "cmd") {
+        return ([[COMMAND, model[1]++msg.char], null])
+      } elif (msg.type === "commandFinished") {
+        sleep 1 # show the output for a sec xD
+        return ([[PROMPT, ""], null])
+      }
+    }
+  }
+  return ([model, null])
+}
+
+proc view (;model) {
+  #write -n u'\u{1b}[2K\r'
+  case (model[0]) {
+    (PROMPT) {
+      tui render-view "# $[model[1]]" (hide_cursor=false)
+    }
+    (COMMAND) {
+      tui render-view "cmd $[model[1]]" (hide_cursor=false)
+    }
+    
+  }
+}
+
+
+# TODO: https://github.com/oils-for-unix/oils/issues/2660
+# `source` needs the "init()" function already defined!
+#use ./../mvu.ysh
+#mvu run (init, update, view)
+source $_this_dir/../mvu.ysh
+run

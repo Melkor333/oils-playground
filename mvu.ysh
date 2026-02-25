@@ -18,19 +18,25 @@
 
 # Helper function that listens to keypresses and converts them into messages
 proc input-to-message(listener, source) {
-  stty -echo
   fork {
     redir >> $listener {
       while (true) {
+        var char = ''
+        var chars = ''
         try {
-          read -n 1 char 2>/dev/null
+          IFS= read -sn 1 char 2>/dev/null
         }
         if failed {
-          exit
+          # TODO: Message that source closed?!
+          break
+        }
+        # Try to read as much as possible
+        try {
+          IFS= read -t 0 chars 2>/dev/null
         }
         # TODO: Translate ble.sh src/decode.sh key decoding
         # Sometimes this randomly hangs. Unclear why
-        message ({src: source, type: "input", char})
+        message ({src: source, type: "input", char: char ++ chars})
       }
     }
   }
@@ -40,24 +46,25 @@ proc input-to-message(listener, source) {
 proc wrapped-command (source;var;;block) {
   call var->setValue(^(
   var listener = $(mktemp --tmpdir -u)
-  echo $listener
   mkfifo $listener
-    fork {
-  redir <$listener >>$LISTENER {
-      var out
-      while (true) {
-        try { read -n 1 out }
-        if failed { break }
-        if (len(out) > 0) {
-          message ({type: "input", src: source, char:out})
-        }
-        setvar out = ''
-      }
+  fork {
+    redir <$listener {
+      input-to-message $LISTENER $source
+      #var out
+      #while (true) {
+      #  try { IFS= read -rn 1 out }
+      #  if failed { break }
+      #  if (len(out) > 0) {
+      #    message ({type: "input", src: source, char:out})
+      #  }
+      #  setvar out = ''
+      #}
     }
   }
 
   try {
-    redir >>$listener { call io->eval(block) }
+    # TODO: STDERR seperately!
+    redir 2>>$listener >>$listener { call io->eval(block) }
   }
   message ({type: "commandFinished", source, error: _error })
   rm $listener
@@ -74,6 +81,7 @@ proc message (;message) {
 
 # setup and eventloop
 proc run() {
+  stty -echo
   setglobal LISTENER = $(mktemp --tmpdir -u msgs.XXXXX)
   # TODO: This could also be a plain file and a `tail -f` process could read it
   mkfifo $LISTENER
