@@ -2,12 +2,11 @@
 # A very simple app that just increments a number every second
 
 use $_this_dir/../tui.ysh
+source $_this_dir/../mvu.ysh
 
 func init() {
   var model = 0
   var effect = ^(
-    # TODO: Don't write in the effect!!
-    trap reset EXIT
     while (true) {
       sleep 1
       message ({type: "tick"})
@@ -25,14 +24,12 @@ func update(model, msg) {
 }
 
 proc view (;model) {
-  #write -n u'\u{1b}[2K\r'
-  tui render-view $model (hide_cursor=true)
+  write -n u'\u{1b}[2K\r'
+  write -n $model
+  #tui render-view $model (hide_cursor=true)
 }
 
 
 # TODO: https://github.com/oils-for-unix/oils/issues/2660
-# `source` needs the "init()" function already defined!
-#use ./../mvu.ysh
 #mvu run (init, update, view)
-source $_this_dir/../mvu.ysh
 run

@@ -6,7 +6,7 @@ func init() {
   return ([
     {n: 0, i:"Press a key!"}, # the model
     ^(while (true) { # The effect
-        sleep 1
+        sleep 1 >/dev/null
         message ({type: "tick"})
       })
   ])
@@ -25,12 +25,11 @@ func update(model, msg) {
     setvar model.i = msg.char
     return ([model, null])
   }
-
 }
 
 proc view (;model) {
-  write -n u'\u{1b}[2K\r'
-  tui render-view "$[model.n] $[model.i]" (hide_cursor=true)
+  var NL = u'\n'
+  tui render-view "$[model.n]$NL$[model.i]" (hide_cursor=true)
 }
 
 
@@ -39,4 +38,4 @@ proc view (;model) {
 #use ./../mvu.ysh
 #mvu run (init, update, view)
 source $_this_dir/../mvu.ysh
-run
+run (debug=true)

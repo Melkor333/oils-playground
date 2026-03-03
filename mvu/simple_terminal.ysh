@@ -5,33 +5,45 @@ use $_this_dir/../tui.ysh
 
 const PROMPT = 0
 const COMMAND = 1
+const NL = u'\n'
 
 func init() {
   # prompt
-  var model = [PROMPT, ""]
+  var model = {current: PROMPT, prompt: "", command: ""}
   return ([model, null])
 }
 
 func update(model, msg) {
-  case (model[0]) {
+  if (msg.type === "input" and msg.src === "cmd") {
+    log $[model.command]
+    setvar model.command = model.command ++ msg.char
+    return ([model, null])
+  }
+  case (model.current) {
     (PROMPT) {
-      if (msg.type === "input") {
+      if (msg.type === "input" and msg.src === "keyboard") {
         if (msg.char === u'') {
-          wrapped-command cmd (&cmd) {
-            call io->eval(parseCommand(model[1]))
+          var command
+          try {
+            setvar command = parseCommand(model.prompt)
+            wrapped-command cmd (&cmd;;command)
+            # switching to COMMAND mode
+            return ([{current: COMMAND, prompt: "", command: model.command}, cmd])
           }
-          # switching to COMMAND mode
-          return ([[COMMAND, ""], cmd])
+          # TODO: if failed
+          #if failed {
+          #  setvar model.command = model.command ++ "FAILED TO READ COMMAND"
+          #  return ([model, cmd])
+          #}
         }
       }
-      return ([[PROMPT, model[1]++msg.char], null])
+      setvar model.prompt = model.prompt ++ msg.char
+      return ([model, null])
     }
     (COMMAND) {
-      if (msg.type === "input" and msg.src === "cmd") {
-        return ([[COMMAND, model[1]++msg.char], null])
-      } elif (msg.type === "commandFinished") {
-        sleep 1 # show the output for a sec xD
-        return ([[PROMPT, ""], null])
+      if (msg.type === "commandFinished") {
+        setvar model.current = PROMPT
+        return ([model, null])
       }
     }
   }
@@ -40,21 +52,19 @@ func update(model, msg) {
 
 proc view (;model) {
   #write -n u'\u{1b}[2K\r'
-  case (model[0]) {
+  case (model.current) {
     (PROMPT) {
-      tui render-view "# $[model[1]]" (hide_cursor=false)
+      tui render-view "$[model.command] $NL# $[model.prompt]" (hide_cursor=false)
     }
     (COMMAND) {
-      tui render-view "cmd $[model[1]]" (hide_cursor=false)
+      tui render-view "$[model.command]" (hide_cursor=false)
     }
-    
   }
 }
-
 
 # TODO: https://github.com/oils-for-unix/oils/issues/2660
 # `source` needs the "init()" function already defined!
 #use ./../mvu.ysh
 #mvu run (init, update, view)
 source $_this_dir/../mvu.ysh
-run
+run (debug=true)

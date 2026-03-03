@@ -113,8 +113,11 @@ proc get-dimensions() {
 }
 
 get-dimensions
-trap get-dimensions SIGWINCH
-trap "write -n $TERM_RESET$[run_csi('cursor_show')]$[run_csi('cursor_style', CURSOR_DEFAULT)]" EXIT
+trap --add SIGWINCH { get-dimensions }
+#proc reset {
+#  "write -n $TERM_RESET$[run_csi('cursor_show')]$[run_csi('cursor_style', CURSOR_DEFAULT)]"
+#}
+trap --add EXIT { reset }
 
 setglobal LAST_LOG_LENGTH = 0
 proc log-with-footer (log, ...footer) {
@@ -126,20 +129,20 @@ proc log-with-footer (log, ...footer) {
   }
 
   #echo $[height - LAST_LOG_LENGTH]
-  write -n $[run_csi('cursor_pos',TERM_HEIGHT - LAST_LOG_LENGTH + 1,0)]
-  write -n $[run_csi('linewrap_disable')]
-  write $log
+  write -n -- $[run_csi('cursor_pos',TERM_HEIGHT - LAST_LOG_LENGTH + 1,0)]
+  write -n -- $[run_csi('linewrap_disable')]
+  write -- $log
   var lines = len(footer_lines)
   for i, line in (footer_lines) {
-    write $[run_csi('line_clear')]
+    write -- $[run_csi('line_clear')]
     if (i === lines-1) {
-      write -n $line
+      write -n -- $line
       continue
     }
     if (len(line) >= TERM_WIDTH) {
-      write $[line[:TERM_WIDTH]]
+      write -- $[line[:TERM_WIDTH]]
     } else {
-      write $line
+      write -- $line
     }
   }
   #echo OK3
@@ -268,26 +271,26 @@ func paragraph(text, width, height, wrap=DUMB_WRAP) {
 }
 
 setglobal LAST_RENDER_LENGTH = 0
-proc render-view (view;;vertical_bound="t", hide_cursor=false) {
+proc render-view (view;;vertical_bound="f", hide_cursor=false) {
   ### redraw and write the view
   var lines = view=>split(u'\n')
   var line_count = len(lines)
 
   # TODO: Store cursor state, don't hide every time
   write -n $[run_csi('cursor_hide')]
-  # if we're bottom bound, we only go  to the
-  if (LAST_RENDER_LENGTH > 0) {
-    if (vertical_bound !== "t") {
-      write -n $[run_csi('cursor_up', LAST_RENDER_LENGTH)]
-    } else {
-      write -n $[run_csi('cursor_pos', line_count)]
-    }
+  # If we stay at the very top
+  if (vertical_bound === "t") {
+    # Stay at the very top
+    write -n $[run_csi('cursor_pos', 0, 0)]
+  } elif (LAST_RENDER_LENGTH > 0) {
+    write -n $[run_csi('cursor_up', LAST_RENDER_LENGTH-1)]
+    write -n -- $[\r]
   }
-  write -n $[\r]
-  write -n $[run_csi('erase_below')]
-  write -n $[run_csi('linewrap_disable')]
-  write --end '' $view
-  if (not hide_cursor) { write -n $[run_csi('cursor_show')] }
+
+  write -n -- $[run_csi('erase_below')]
+  write -n -- $[run_csi('linewrap_disable')]
+  write -n -- $view
+  if (not hide_cursor) { write -n -- $[run_csi('cursor_show')] }
   setglobal LAST_RENDER_LENGTH = line_count
 }
 

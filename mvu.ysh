@@ -15,111 +15,170 @@
 # Terminal Resize: TODO
 #
 # TODO: Convert into a module that takes an `object` which has init, update and view props
+setglobal DEBUG_FILE = null
+
+proc log (...message) {
+  if (DEBUG_FILE is null) {
+    return
+  }
+  var m = message=>join(" ")
+  write -- $m >> $DEBUG_FILE
+}
+
+# makes any input followable, even if it's a file which ends with an EOF
+# This means reading on input blocks until something is appended to the file
+proc follow-stdin (source="stdin";file=null;;block) {
+  if test -p /dev/stdin {
+    log $source got a FIFO
+    call io->eval(block, in_captured_frame=true)
+  } elif test -t 0 {
+    log $source got a TTY
+    call io->eval(block, in_captured_frame=true)
+  } else {
+    log $source got a file
+    # Files have an implicit EOF, thus we need to use tail to follow the output
+    tail -f /dev/stdin | {
+      call io->eval(block, in_captured_frame=true)
+    }
+  }
+}
 
 # Helper function that listens to keypresses and converts them into messages
-proc input-to-message(listener, source) {
-  fork {
-    redir >> $listener {
-      while (true) {
-        var char = ''
-        var chars = ''
-        try {
-          IFS= read -sn 1 char 2>/dev/null
-        }
-        if failed {
-          # TODO: Message that source closed?!
-          break
-        }
-        # Try to read as much as possible
-        try {
-          IFS= read -t 0 chars 2>/dev/null
-        }
-        # TODO: Translate ble.sh src/decode.sh key decoding
-        # Sometimes this randomly hangs. Unclear why
-        message ({src: source, type: "input", char: char ++ chars})
+# Important: This expects e.g. a FIFO where a read hangs!
+proc input-to-message(source;; read_chunks=false) {
+  # We need to do the `redir` at the beginning. otherwise the FD is opened/closed on every message!
+  while (true) {
+    var char = ''
+      var chars = ''
+      try { IFS= read -sn 1 char 2>/dev/null }
+      # TODO: Message that source closed?!
+    if failed { break }
+    # Try to read as much as possible
+    if (read_chunks) {
+      try {
+        IFS= read -t 0 chars 2>/dev/null
+          setvar char = char ++ chars
       }
     }
+    # TODO: Translate ble.sh src/decode.sh key decoding
+    # Sometimes this randomly hangs. Unclear why
+    message ({src: source, type: "input", char})
   }
 }
 
-# Retuen a command for which output is sent back as messages
-proc wrapped-command (source;var;;block) {
+# Return a command for which output is sent back as messages to STDOUT
+proc wrapped-command (source;var;use_fifo=true;block) {
   call var->setValue(^(
-  var listener = $(mktemp --tmpdir -u)
-  mkfifo $listener
-  fork {
-    redir <$listener {
-      input-to-message $LISTENER $source
-      #var out
-      #while (true) {
-      #  try { IFS= read -rn 1 out }
-      #  if failed { break }
-      #  if (len(out) > 0) {
-      #    message ({type: "input", src: source, char:out})
-      #  }
-      #  setvar out = ''
-      #}
-    }
-  }
-
   try {
     # TODO: STDERR seperately!
-    redir 2>>$listener >>$listener { call io->eval(block) }
+    # Redirect command output to our message listener
+    { call io->eval(block) } | input-to-message $source
   }
-  message ({type: "commandFinished", source, error: _error })
-  rm $listener
+  message ({type: "commandFinished", src: source, error: _error })
   ))
 }
+
 proc message (;message) {
-  # ensure we write to the right place!
-  redir >> $LISTENER {
-    # we need to fork, because it sometimes hangs
-    # I suspect a bug on android with fifos
-    fork { json write (message, space=0) }
-  }
+  # On Android we need to fork, because it sometimes hangs
+  # I suspect a bug on android with fifos
+  #fork { json write (message, space=0) }
+  json write (message, space=0)
 }
 
-# setup and eventloop
-proc run() {
-  stty -echo
-  setglobal LISTENER = $(mktemp --tmpdir -u msgs.XXXXX)
-  # TODO: This could also be a plain file and a `tail -f` process could read it
-  mkfifo $LISTENER
-  trap "rm $LISTENER" EXIT INT
-
+# eventloop
+proc event-loop(;listener;debug_file=null,use_fifo=true,keep_files=false) {
   var model
   var msg
   var effect
+  var msgstring
 
   # run init function
   # TODO: Pass arguments
+  log "Running init"
   setvar model, effect = init()
-  fork { input-to-message $LISTENER keyboard }
 
-  exec </dev/null
-
+  log "Starting Event loop"
   while (true) {
     # expect the model & a expression
     if (effect is not null) {
-      fork {
-        redir >> $LISTENER {
-          call io->eval(effect)
+      log "Running effect"
+        redir >> $listener 2>> $listener {
+          fork {
+          try {
+            call io->eval(effect)
+          }
         }
       }
     }
-    # forkwait to ensure the view can't edit the model!
+    setvar effect = null
+
+    # we CANNOT use forkwait, because the tui.ysh might have state!
+    log "Render Model"
     if (model is not null) {
-      forkwait { view (model) }
+      view (model)
     }
 
-    redir < $LISTENER {
+    log "Try to parse message"
+    try {
       read --raw-line (&msgstring)
+      log $msgstring
+      # TODO: vibdecode netstring library
+      setvar msg = fromJson(msgstring)
+    } >> $DEBUG_FILE 2>> $DEBUG_FILE
+    if failed {
+      if (len(msgstring) > 0) {
+        log "Could not parse message $msgstring. Aborting!"
+        break
+      }
+      log "Got empty message on main listener, ignoring"
+      setvar msg = null
+      continue
     }
-    # TODO: vibdecode netstring library
-    setvar msg = fromJson(msgstring)
+    setvar msgstring = ''
 
+    log "Updating Model"
     redir > /dev/null {
       setvar model, effect = update(model, msg)
+    }
+  }
+}
+
+proc run(;;debug=false,debug_file=null,use_fifo=true,keep_files=false) {
+  stty -echo
+
+  # Setup a listener
+  # Listenerdir is global to be used by wrapped_command to add listeners
+  # TODO: Not necessary if we can use unnamed pipes!
+  # TODO: But this does make debuggability harader
+  setglobal LISTENERDIR = $(mktemp --tmpdir -d listeners.XXXXX)
+
+  var eventloopListener = "$LISTENERDIR/listener"
+  if (use_fifo) {
+    mkfifo $eventloopListener
+  } else {
+    # TODO: use unbuffer to make it faster!
+    touch $eventloopListener
+  }
+
+  if (debug and debug_file is null) {
+    setglobal DEBUG_FILE = "$LISTENERDIR/debug"
+  }
+
+  if (not debug and not keep_files) {
+    log "Setting up trap to remove listener"
+    trap --add EXIT {
+      rm -r $LISTENERDIR
+    }
+  }
+
+  log "Setting up keyboard listener"
+  fork { redir >$eventloopListener { follow-stdin { input-to-message keyboard } } }
+
+  log "Starting eventloop"
+  redir < $eventloopListener {
+    # Start the event loop
+    follow-stdin mainListener {
+      event-loop (eventloopListener, debug_file=debug_file, use_fifo=use_fifo, keep_files=keep_files)
     }
   }
 }
