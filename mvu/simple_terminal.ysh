@@ -1,5 +1,7 @@
 #!/usr/bin/env ysh
-# A very simple app that just increments a number every second
+# A simple "terminal"
+# Show a prompt, and execute the command on `enter`
+# The output is stored in the model and everything is reprinted everytime
 
 use $_this_dir/../tui.ysh
 # TODO: https://github.com/oils-for-unix/oils/issues/2660
@@ -13,7 +15,6 @@ const COMMAND = 1
 const NL = u'\n'
 
 func init() {
-  # prompt
   var model = {current: PROMPT, prompt: "", command: ""}
   return ([model, null])
 }
@@ -29,13 +30,13 @@ func update(model, msg) {
       if (msg.type === "input" and msg.src === "keyboard") {
         case (msg.char) {
           (b'\y08') {
+              # Delete a character
               setvar model.prompt = model.prompt[:-1]
-              # switching to COMMAND mode
               return ([model, null])
           }
           (b'\y7f') {
+              # Delete a character
               setvar model.prompt = model.prompt[:-1]
-              # switching to COMMAND mode
               return ([model, null])
           }
           (\n) {
@@ -44,7 +45,7 @@ func update(model, msg) {
               setvar command = parseCommand(model.prompt)
               wrapped-command cmd (&cmd;;command)
               # switching to COMMAND mode
-              return ([{current: COMMAND, prompt: "", command: model.command}, cmd])
+              return ([{current: COMMAND, prompt: "", command: model.command ++ "$[\n]# $[model.prompt]$[\n]" }, cmd])
             }
             # TODO: if failed
             #if failed {
