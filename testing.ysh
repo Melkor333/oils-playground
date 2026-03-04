@@ -2,19 +2,28 @@
 
 use ctx.ysh
 
-# TODO: remove, it's only used for testing tui.ysh!
-# IDEA: use `generate.ysh` as module...
-#use tui.ysh
-
-# Weirdly, thats rhe easiest way to get a UNIX timestamp in POSIX shell
+# Weirdly, thats the easiest way to get a UNIX timestamp in POSIX shell
 # TODO: Add config option for seed
 setglobal _SEED = $(awk 'BEGIN {srand();print srand()}')
+write -- "Selected Seed: $_SEED"
 
 func positive_int(min, max) {
   setglobal SEED += 1
   # https://unix.stackexchange.com/questions/140750/generate-random-numbers-in-specific-range
   var num = $(awk -v seed=$SEED -v min=$min -v max=$max 'BEGIN{srand(seed); print int(min+rand()*(max-min+1))}')
   return (int(num))
+}
+
+func random_string(length) {
+  setglobal SEED += 1
+  return ($(awk -v seed=$SEED -v l=$length '
+    BEGIN {
+      srand(seed);
+      for(i=0;i<l;i++) {
+        printf("%c", int(rand()*62));
+      }
+    }
+    '))
 }
 
 func alphanum(length) {
@@ -66,4 +75,4 @@ if is-main {
   runproc @ARGV
 }
 
-var __provide__ = :|run p-test positive_int alphanum|
+var __provide__ = :|run p-test positive_int alphanum random_string |

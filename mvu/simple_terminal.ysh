@@ -2,6 +2,11 @@
 # A very simple app that just increments a number every second
 
 use $_this_dir/../tui.ysh
+# TODO: https://github.com/oils-for-unix/oils/issues/2660
+# `source` needs the "init()" function already defined!
+#use ./../mvu.ysh
+#mvu run (init, update, view)
+source $_this_dir/../mvu.ysh
 
 const PROMPT = 0
 const COMMAND = 1
@@ -22,7 +27,7 @@ func update(model, msg) {
   case (model.current) {
     (PROMPT) {
       if (msg.type === "input" and msg.src === "keyboard") {
-        if (msg.char === u'') {
+        if (msg.char === \n) {
           var command
           try {
             setvar command = parseCommand(model.prompt)
@@ -62,9 +67,4 @@ proc view (;model) {
   }
 }
 
-# TODO: https://github.com/oils-for-unix/oils/issues/2660
-# `source` needs the "init()" function already defined!
-#use ./../mvu.ysh
-#mvu run (init, update, view)
-source $_this_dir/../mvu.ysh
 run (debug=true)

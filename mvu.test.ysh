@@ -1,0 +1,82 @@
+# TODO: `use` should be allowed within a block!
+# it's now in generator.ysh
+use $LIB_YSH/math.ysh
+use testing.ysh --pick p-test positive_int alphanum
+source mvu.ysh
+use tui.ysh
+
+const NL = \n
+
+p-test 'write-netstring: simple' {
+  write-netstring "12345" | read --all (&out)
+
+  assert [out === "5:12345,"]
+}
+
+p-test 'write-netstring: newline' {
+  write-netstring $NL | read --all (&out)
+
+  assert [out === "1:$NL,"]
+}
+
+p-test 'read-netstring: fails with too much data' {
+  try {
+    write -n "1:01," | read-netstring (&out)
+  } 2>/dev/null
+
+  = _error
+  #assert [_error.stderr ~~ / dot* 'Invalid netstring' dot* /]
+  assert [_error.code === 3]
+}
+
+p-test 'read-netstring: fails with non-integer' {
+  try {
+    write -n "a:01," | read-netstring (&out)
+  } 2>/dev/null
+
+  = _error
+  #assert [_error.stderr ~~ / dot* 'Invalid netstring' dot* /]
+  assert [_error.code === 3]
+}
+
+p-test 'read-netstring: newline is empty' {
+  write -n "1:$NL," | read-netstring (&out)
+
+  assert [\n === out]
+}
+
+p-test 'read-netstring: more than 10 characters' {
+  write -n "11:12345678901," | read-netstring (&out)
+
+  assert ['12345678901' === out]
+}
+
+p-test 'read-netstring: more than 100 characters' {
+  {
+    write -n "110:";
+    for _ in (0..=10) { write -n "1234567890" };
+    write -n ','
+  } | read-netstring (&out)
+
+  assert [len(out) === 110]
+}
+
+p-test 'write-netstring: escape sequences' {
+  write-netstring $[tui.COL.black] | read --all (&out)
+  assert ["5:$[tui.COL.black]," === out]
+
+}
+
+p-test 'read-netstring: escape sequences' {
+  write -n -- "5:$[tui.COL.black]," | read-netstring (&out)
+  assert [ $[tui.COL.black] === out]
+}
+
+p-test 'Property test read/write netstring' {
+  for _ in (0..<100) {
+    var string = testing.random_string(testing.positive_int(5,50))
+    write "String: $(printf "%q" $string)"
+    write-netstring $string | read-netstring (&out)
+    assert [ string === out]
+  }
+}

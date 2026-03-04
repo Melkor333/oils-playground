@@ -25,6 +25,41 @@ proc log (...message) {
   write -- $m >> $DEBUG_FILE
 }
 
+proc write-netstring (data) {
+  log "$[len(data)]:$data,"
+  write -n -- "$[len(data)]:$data,"
+}
+
+proc read-netstring (;out_var) {
+  # 1. Read the length (digits before the colon)
+  var length_str = ""
+  while (true) {
+    var char = ""
+    IFS= read -sN 1 char
+    if (char === ":") {
+      break
+    }
+    setvar length_str = length_str ++ char
+  }
+
+  # Make sure it is a valid int!
+  var _ = int(length_str)
+
+  # 2. Read exactly 'n' bytes of data
+  var data = ""
+  IFS= read -r -sN $length_str data
+
+  # 3. Read and verify the trailing comma
+  var terminator = ""
+  read --num-bytes 1 (&terminator)
+  if (terminator !== ",") {
+    error "Invalid netstring: expected comma terminator, got $terminator after reading $data" (code=3)
+  }
+
+  # Return the result via the provided variable name
+  call out_var->setValue(data)
+}
+
 # makes any input followable, even if it's a file which ends with an EOF
 # This means reading on input blocks until something is appended to the file
 proc follow-stdin (source="stdin";file=null;;block) {
@@ -45,23 +80,36 @@ proc follow-stdin (source="stdin";file=null;;block) {
 
 # Helper function that listens to keypresses and converts them into messages
 # Important: This expects e.g. a FIFO where a read hangs!
+# TODO: read_chunks is currently ignored. see below
 proc input-to-message(source;; read_chunks=false) {
-  # We need to do the `redir` at the beginning. otherwise the FD is opened/closed on every message!
+  var pid = $$
   while (true) {
     var char = ''
-      var chars = ''
-      try { IFS= read -sn 1 char 2>/dev/null }
-      # TODO: Message that source closed?!
-    if failed { break }
-    # Try to read as much as possible
-    if (read_chunks) {
-      try {
-        IFS= read -t 0 chars 2>/dev/null
-          setvar char = char ++ chars
-      }
+    var chars = ''
+    try { read -r -sN 1 char 2>/dev/null }
+    # TODO: Message that source closed?!
+    if failed {
+      log "Failed reading for $source. Exiting"
+      break
     }
+
+    # TODO: Requires `read -t 0.01` which is currently not supported by Oils!
+    # Any hacks using `read -t 0` doesn't work on a FIFO (it hangs or flushes all inputs...)
+    #if (read_chunks) {
+    #  try {
+    #    IFS= read -r -st 0.01 chars 2>/dev/null
+    #    setvar char = char ++ chars
+    #  }
+    #  if failed {
+    #    log "Failed reading for $source. Exiting"
+    #    log ($(pp value (_error)))
+    #    break
+    #  }
+    #}
     # TODO: Translate ble.sh src/decode.sh key decoding
     # Sometimes this randomly hangs. Unclear why
+
+    log $(printf 'received character: %b\n' "$char")
     message ({src: source, type: "input", char})
   }
 }
@@ -72,7 +120,7 @@ proc wrapped-command (source;var;use_fifo=true;block) {
   try {
     # TODO: STDERR seperately!
     # Redirect command output to our message listener
-    { call io->eval(block) } | input-to-message $source
+    { call io->eval(block) } | input-to-message $source (read_chunks=true)
   }
   message ({type: "commandFinished", src: source, error: _error })
   ))
@@ -82,7 +130,7 @@ proc message (;message) {
   # On Android we need to fork, because it sometimes hangs
   # I suspect a bug on android with fifos
   #fork { json write (message, space=0) }
-  json write (message, space=0)
+  write-netstring $[toJson8(message, space=0)]
 }
 
 # eventloop
@@ -120,17 +168,18 @@ proc event-loop(;listener;debug_file=null,use_fifo=true,keep_files=false) {
 
     log "Try to parse message"
     try {
-      read --raw-line (&msgstring)
+      read-netstring (&msgstring)
       log $msgstring
       # TODO: vibdecode netstring library
-      setvar msg = fromJson(msgstring)
+      setvar msg = fromJson8(msgstring)
     } >> $DEBUG_FILE 2>> $DEBUG_FILE
     if failed {
-      if (len(msgstring) > 0) {
+      log "_error: $(pp value (_error))"
+      if (msgstring is Str and len(msgstring) > 0) {
         log "Could not parse message $msgstring. Aborting!"
         break
       }
-      log "Got empty message on main listener, ignoring"
+      log "Couldn't parse $msgstring"
       setvar msg = null
       continue
     }
@@ -145,6 +194,11 @@ proc event-loop(;listener;debug_file=null,use_fifo=true,keep_files=false) {
 
 proc run(;;debug=false,debug_file=null,use_fifo=true,keep_files=false) {
   stty -echo
+
+  # Set up Terminal to read one character at a time
+  setglobal old = $(stty -g)
+  stty -icanon -echo min 1 time 0
+  trap --add EXIT { stty $old }
 
   # Setup a listener
   # Listenerdir is global to be used by wrapped_command to add listeners
