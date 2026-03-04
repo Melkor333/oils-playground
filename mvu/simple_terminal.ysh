@@ -27,19 +27,31 @@ func update(model, msg) {
   case (model.current) {
     (PROMPT) {
       if (msg.type === "input" and msg.src === "keyboard") {
-        if (msg.char === \n) {
-          var command
-          try {
-            setvar command = parseCommand(model.prompt)
-            wrapped-command cmd (&cmd;;command)
-            # switching to COMMAND mode
-            return ([{current: COMMAND, prompt: "", command: model.command}, cmd])
+        case (msg.char) {
+          (b'\y08') {
+              setvar model.prompt = model.prompt[:-1]
+              # switching to COMMAND mode
+              return ([model, null])
           }
-          # TODO: if failed
-          #if failed {
-          #  setvar model.command = model.command ++ "FAILED TO READ COMMAND"
-          #  return ([model, cmd])
-          #}
+          (b'\y7f') {
+              setvar model.prompt = model.prompt[:-1]
+              # switching to COMMAND mode
+              return ([model, null])
+          }
+          (\n) {
+            var command
+            try {
+              setvar command = parseCommand(model.prompt)
+              wrapped-command cmd (&cmd;;command)
+              # switching to COMMAND mode
+              return ([{current: COMMAND, prompt: "", command: model.command}, cmd])
+            }
+            # TODO: if failed
+            #if failed {
+            #  setvar model.command = model.command ++ "FAILED TO READ COMMAND"
+            #  return ([model, cmd])
+            #}
+          }
         }
       }
       setvar model.prompt = model.prompt ++ msg.char
